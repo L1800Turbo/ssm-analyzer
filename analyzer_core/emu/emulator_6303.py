@@ -1,0 +1,1791 @@
+# analyzer_core/emu/emulator_6303.py
+from __future__ import annotations
+from dataclasses import dataclass
+from typing import Optional, Callable, Dict
+import logging
+
+    # Capstone-Import entfernt, stattdessen Disassembler/Instruction
+
+from analyzer_core.config.memory_map import MemoryMap, MemoryRegion, RegionKind
+from analyzer_core.data.rom_image import RomImage
+from analyzer_core.disasm.insn_model import Instruction
+from analyzer_core.emu.memory_manager import MemoryManager
+from analyzer_core.emu.hooks import HookManager
+from analyzer_core.emu.tracing import ExecutionTracer, MemAccess
+from analyzer_core.config.rom_config import RomConfig
+from analyzer_core.disasm.capstone_wrap import Disassembler630x, OperandType
+
+class EmulationError(Exception):
+    pass
+
+@dataclass
+class CPUFlags:
+    C: int = 0  # Carry
+    Z: int = 0  # Zero
+    N: int = 0  # Negative
+    V: int = 0  # Overflow
+    I: int = 0  # IRQ mask
+
+
+def operand_needed(func):
+    def wrapper(self, instr: Instruction):
+        if instr.op_str is None:
+            raise ValueError(f"Instruction {instr.mnemonic} needs operand, but none given")
+        elif instr.target_value is None:
+            raise ValueError(f"Instruction {instr.mnemonic} needs target address, but none given")
+        elif instr.target_type is None:
+            raise ValueError(f"Instruction {instr.mnemonic} needs target type, but none given")
+        return func(self, instr)
+    return wrapper
+
+class Emulator6303:
+    def __init__(
+        self,
+        rom_image: RomImage,
+        dasm: Optional[Disassembler630x] = None,
+        rom_config: Optional[RomConfig] = None,
+        hooks: Optional[HookManager] = None,
+        tracer: Optional[ExecutionTracer] = None,
+        memory_map: Optional[MemoryMap] = None,
+        start_pc: int = 0xFFFF,
+        initial_sp: int = 0x01FF
+    ) -> None:
+        
+        self.logger = logging.getLogger(__name__)
+
+        self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom)
+
+        self.memory_map = memory_map if memory_map else MemoryMap([
+                MemoryRegion(start=0x0000, end=0x1FFF, kind=RegionKind.RAM, name="RAM"),         # 8 KB RAM
+                MemoryRegion(start=0x8000, end=0xFFFF, kind=RegionKind.ROM, name="ROM"),         # 32 KB ROM ab 0x8000
+                # Optional: IO, MAPPED_ROM, etc.
+            ])
+        self.mem = MemoryManager(self.memory_map, rom_image)
+        self.hooks = hooks or HookManager()
+        self.tracer = tracer or ExecutionTracer()
+        self.rom_config = rom_config or RomConfig()
+
+        # Register
+        self.A = 0
+        self.B = 0
+        self.X = 0
+        self.SP = initial_sp & 0xFFFF
+        self.PC = start_pc & 0xFFFF
+        self.flags = CPUFlags()
+
+
+    # --- Helpers: memory/registers/stack ---
+    def __read_value8(self, instr: Instruction) -> MemAccess:
+        if instr.target_value is None or instr.target_type is None:
+            raise ValueError(f"Instruction {instr.mnemonic} needs target address and type, but none given")
+        
+        if instr.target_type == OperandType.DIRECT:
+            addr = instr.target_value
+            val = self.read8(addr)
+        elif instr.target_type == OperandType.IMMEDIATE:
+            addr = None
+            val = instr.target_value
+        elif instr.target_type == OperandType.INDIRECT:
+            addr = (self.X + instr.target_value) & 0xFFFF
+            val = self.read8(addr)
+        else:
+            raise ValueError(f"Unsupported operand type: {instr.target_type}")
+        
+        return MemAccess(
+            addr=addr,
+            var=self.rom_config.get_by_address(addr) if addr is not None else None,
+            value=val,
+            rw='R',
+            by=self.PC,
+            instr_addr=self.PC,
+            next_instr_addr=None
+        )
+
+    def __read_value16(self, instr: Instruction) -> MemAccess:
+        if instr.target_value is None or instr.target_type is None:
+            raise ValueError("Invalid instruction: missing target address or type.")
+
+        if instr.target_type == OperandType.DIRECT:
+            addr = instr.target_value
+            val = self.read16(addr)
+        elif instr.target_type == OperandType.IMMEDIATE:
+            addr = None
+            val = instr.target_value & 0xFFFF
+        elif instr.target_type == OperandType.INDIRECT:
+            addr = (self.X + instr.target_value) & 0xFFFF
+            val = self.read16(addr)
+        else:
+            raise ValueError(f"Unsupported operand type: {instr.target_type}")
+
+        return MemAccess(
+            addr=addr,
+            var=self.rom_config.get_by_address(addr) if addr is not None else None,
+            value=val,
+            rw='R',
+            by=self.PC,
+            instr_addr=self.PC,
+            next_instr_addr=None
+        )
+    
+    def set_pc(self, addr: int) -> None:
+        self.PC = addr & 0xFFFF
+
+    def read8(self, addr: int) -> int:
+        val = self.mem.read(addr & 0xFFFF) & 0xFF
+        return val
+
+    def write8(self, addr: int, value: int) -> None:
+        self.mem.write(addr & 0xFFFF, value & 0xFF)
+
+    def read16(self, addr: int) -> int:
+        hi = self.read8(addr)
+        lo = self.read8((addr + 1) & 0xFFFF)
+        return ((hi << 8) | lo) & 0xFFFF
+
+    def write16(self, addr: int, value: int) -> None:
+        hi = (value >> 8) & 0xFF
+        lo = value & 0xFF
+        self.write8(addr, hi)
+        self.write8((addr + 1) & 0xFFFF, lo)
+
+    def push8(self, b: int) -> None:
+        # 6800/630x: write at SP, then decrement SP
+        self.write8(self.SP, b & 0xFF)
+        self.SP = (self.SP - 1) & 0xFFFF
+
+    def push16(self, w: int) -> None:
+        self.push8(w & 0xFF)
+        self.push8((w >> 8) & 0xFF)
+
+    def pull8(self) -> int:
+        self.SP = (self.SP + 1) & 0xFFFF
+        return self.read8(self.SP)
+
+    def pull16(self) -> int:
+        lo = self.pull8()
+        hi = self.pull8()
+        return ((hi << 8) | lo) & 0xFFFF
+
+    def _set_ZN_8(self, value: int) -> None:
+        v8 = value & 0xFF
+        self.flags.Z = 1 if v8 == 0 else 0
+        self.flags.N = 1 if (v8 & 0x80) else 0
+
+    # --- Instruction helpers (subset; ausbaufähig) ---
+    def _AND8(self, lhs: int, rhs: int) -> int:
+        res = (lhs & rhs) & 0xFF
+        self._set_ZN_8(res)
+        self.flags.V = 0
+        return res
+
+    def _OR8(self, lhs: int, rhs: int) -> int:
+        res = (lhs | rhs) & 0xFF
+        self._set_ZN_8(res)
+        self.flags.V = 0
+        return res
+
+    def _ADD8(self, lhs: int, rhs: int) -> int:
+        s = (lhs & 0xFF) + (rhs & 0xFF)
+        self._set_ZN_8(s)
+        self.flags.C = 1 if s > 0xFF else 0
+        # Overflow (signed)
+        a, b, r = lhs & 0xFF, rhs & 0xFF, s & 0xFF
+        self.flags.V = 1 if ((a ^ r) & (b ^ r) & 0x80) else 0
+        return s & 0xFF
+
+    def _SUB8(self, lhs: int, rhs: int) -> int:
+        s = (lhs & 0xFF) - (rhs & 0xFF)
+        r = s & 0xFF
+        self._set_ZN_8(r)
+        self.flags.C = 1 if (lhs & 0xFF) < (rhs & 0xFF) else 0
+        self.flags.V = 1 if (((lhs ^ rhs) & (lhs ^ r) & 0x80) != 0) else 0
+        return r
+    
+    def _shift_left(self, value):
+        old = value
+        self.C = (old >> 7) & 0x01
+        result = (old << 1) & 0xFF
+        self._set_ZN_8(result)
+        self.V = 1 if ((old ^ result) & 0x80) != 0 else 0
+        return result
+
+    def _shift_right(self, value, arithmetic=False):
+        old = value
+        self.C = old & 0x01
+        
+        if arithmetic:
+            result = ((old >> 1) | (old & 0x80)) & 0xFF
+        else:
+            result = (old >> 1) & 0xFF
+        self._set_ZN_8(result)
+        self.V = 0
+        return result
+
+    def _rotate_left(self, value):
+        old = value
+        carry_in = self.C
+        self.C = (old >> 7) & 0x01
+        result = ((old << 1) | carry_in) & 0xFF
+        self._set_ZN_8(result)
+        self.V = 1 if ((old ^ result) & 0x80) != 0 else 0
+        return result
+
+    def _rotate_right(self, value):
+        old = value
+        carry_in = self.C << 7
+        self.C = old & 0x01
+        result = ((old >> 1) | carry_in) & 0xFF
+        self._set_ZN_8(result)
+        self.V = 1 if ((old ^ result) & 0x80) != 0 else 0
+        return result
+    
+    def _transfer(self, src, dst):
+        setattr(self, dst, getattr(self, src))
+        self._set_ZN_8(getattr(self, dst))
+
+
+    # --- Step/Execute ---
+    def _fetch_instruction(self) -> Optional[Instruction]:
+        return self.dasm.disassemble_step(self.PC)
+
+    # def add_mock(self, addr: int, func):
+    #     self._mocked[addr & 0xFFFF] = func
+
+    # def clear_mocks(self):
+    #     self._mocked.clear()
+
+    def step(self) -> Optional[MemAccess]:
+        # Mock‑Einstieg?
+        # if self.PC in self._mocked:
+        #     self._mocked[self.PC](self)
+        #     return
+    
+        instr = self._fetch_instruction()
+        if not instr:
+            raise EmulationError(f"Decode error at 0x{self.PC:04X}")
+        
+        try:
+            func = getattr(self, instr.mnemonic)
+
+            asm_step: MemAccess = func(instr)
+
+            # TODO hier die steps auswerten?
+            print(asm_step)
+
+            return asm_step
+        
+        except AttributeError: # For unknown functions
+                raise EmulationError(f"Unknown instruction: {instr.mnemonic} at address {self.PC:02X}")
+                                #f" stack trace: {self.format_call_stack()}")
+
+
+
+
+    # --- High-level run helpers (wie v2: run_function_end) ---
+    def run_function_end(self, max_steps: int = 100000, clear_mocks_after: bool = True) -> Optional[MemAccess]:
+        """
+        Läuft ab aktuellem PC bis zum Funktionsende (RTS), mit Sentinel (FFFF).
+        """
+        sentinel = 0xFFFF
+        last_step = None
+        # Push Sentinel (=Return-Adresse), damit ein Rücksprung garantiert terminiert
+        self.push16(sentinel)
+        steps = 0
+        while steps < max_steps:
+            if self.PC == sentinel:
+                break
+            last_step = self.step()
+            steps += 1
+        # if clear_mocks_after:
+        #     self.clear_mocks()
+
+        if steps >= max_steps:
+            raise TimeoutError("run_function_end: step limit exceeded")
+
+        return last_step
+
+
+
+
+    # ------------------------ Assembler functions ------------------------
+
+    
+    @operand_needed
+    def ldaa(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        self.A = ma.value & 0xFF
+        self._set_ZN_8(self.A)
+        self.C = self.V = 0
+
+        self.PC += instr.size
+        ma.next_instr_addr = self.PC
+
+        return ma
+    
+    @operand_needed
+    def ldab(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+
+        self.B = ma.value & 0xFF
+        self._set_ZN_8(self.B)
+        self.C = self.V = 0
+
+        self.PC += instr.size
+        ma.next_instr_addr = self.PC
+        return ma
+
+    @operand_needed
+    def staa(self, instr: Instruction) -> MemAccess:
+        val = self.A
+        addr:int = instr.target_value # type: ignore -> checked by decorator
+
+        if instr.target_type == OperandType.DIRECT:
+            self.write8(addr, val)
+        elif instr.target_type == OperandType.INDIRECT:
+            addr = (self.X + addr) & 0xFFFF
+            self.write8(addr, val)
+        else:
+            raise ValueError("Unsupported store")
+
+        self._set_ZN_8(val)
+        self.flags.V = 0
+        # Carry unchanged
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+                addr=addr,
+                var=self.rom_config.get_by_address(addr),
+                value=val,
+                rw='W',
+                by=self.PC,
+                instr_addr=old_PC,
+                next_instr_addr=self.PC
+            )
+
+    @operand_needed
+    def stab(self, instr: Instruction) -> MemAccess:
+        val = self.B
+        addr:int = instr.target_value # type: ignore -> checked by decorator
+
+        if instr.target_type == OperandType.DIRECT:
+            self.write8(addr, val)
+        elif instr.target_type == OperandType.INDIRECT:
+            addr = (self.X + addr) & 0xFFFF
+            self.write8(addr, val)
+        else:
+            raise ValueError("Unsupported store")
+
+        self._set_ZN_8(val)
+        self.flags.V = 0
+        # Carry unchanged
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+                addr=addr,
+                var=self.rom_config.get_by_address(addr),
+                value=val,
+                rw='W',
+                by=self.PC,
+                instr_addr=old_PC,
+                next_instr_addr=self.PC
+            )
+
+    @operand_needed
+    def ldd(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value16(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        self.A = (ma.value >> 8) & 0xFF
+        self.B = ma.value & 0xFF
+        self._set_ZN_8(ma.value)
+        self.V = 0
+
+        self.PC += instr.size
+        ma.next_instr_addr = self.PC
+        return ma
+    
+    @operand_needed
+    def ldx(self, instr: Instruction) -> MemAccess:
+        """Load 16-bit value into X."""
+        ma = self.__read_value16(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        self.X = ma.value & 0xFFFF
+        self._set_ZN_8(ma.value)
+        self.V = 0
+
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+
+        return ma
+
+
+
+    @operand_needed
+    def std(self, instr: Instruction) -> MemAccess:
+        val = ((self.A & 0xFF) << 8) | (self.B & 0xFF)
+        addr:int = instr.target_value # type: ignore -> checked by decorator
+        
+        self.write16(addr, val)
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=addr,
+            var=self.rom_config.get_by_address(addr),
+            value=val,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+
+    @operand_needed
+    def stx(self, instr: Instruction) -> MemAccess:
+        val = self.X
+        address:int = instr.target_value # type: ignore -> checked by decorator
+        self.write16(address, val)
+        
+        self._set_ZN_8(val)
+        self.flags.V = 0
+        # Carry unchanged
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=address,
+            var=self.rom_config.get_by_address(address),
+            value=val,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+
+    @operand_needed
+    def anda(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        self.A = (self.A & ma.value) & 0xFF
+        self._set_ZN_8(self.A)
+        self.flags.V = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=ma.addr,
+            var=ma.var,
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    @operand_needed
+    def andb(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        self.B = (self.B & ma.value) & 0xFF
+        self._set_ZN_8(self.B)
+        self.flags.V = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=ma.addr,
+            var=ma.var,
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    @operand_needed
+    def bita(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        self._set_ZN_8(self.A & ma.value)
+        self.flags.V = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=ma.addr,
+            var=ma.var,
+            value=self.A & ma.value,
+            rw='R',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def cmpa(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        _ = self._SUB8(self.A, ma.value)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=ma.addr,
+            var=ma.var,
+            value=self.A,
+            rw='R',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def cmpb(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        _ = self._SUB8(self.B, ma.value)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=ma.addr,
+            var=ma.var,
+            value=self.B,
+            rw='R',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def oraa(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        self.A = (self.A | ma.value) & 0xFF
+        self._set_ZN_8(self.A)
+        self.flags.V = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=ma.addr,
+            var=ma.var,
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    @operand_needed
+    def orab(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        self.B = (self.B | ma.value) & 0xFF
+        self._set_ZN_8(self.B)
+        self.flags.V = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=ma.addr,
+            var=ma.var,
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def clra(self, instr: Instruction) -> MemAccess:
+        self.A = 0
+        self._set_ZN_8(self.A)
+        self.flags.V = 0
+        self.flags.C = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def clrb(self, instr: Instruction) -> MemAccess:
+        self.B = 0
+        self._set_ZN_8(self.B)
+        self.flags.V = 0
+        self.flags.C = 0
+        
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def clr(self, instr: Instruction) -> MemAccess:
+        addr = instr.target_value
+        if addr is None:
+            raise ValueError("Invalid target address")
+        
+        self.write8(addr, 0x00)
+        self.flags.Z = 1
+        self.flags.N = 0
+        self.flags.V = 0
+        self.flags.C = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=addr,
+            var=self.rom_config.get_by_address(addr),
+            value=0,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def asla(self, instr: Instruction) -> MemAccess:
+        self.A = self._shift_left(self.A)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def aslb(self, instr: Instruction) -> MemAccess:
+        self.B = self._shift_left(self.B)
+        
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.B),
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def asra(self, instr: Instruction) -> MemAccess:
+        self.A = self._shift_right(self.A, arithmetic=True)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def asrb(self, instr: Instruction) -> MemAccess:
+        self.B = self._shift_right(self.B, arithmetic=True)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def lsra(self, instr: Instruction) -> MemAccess:
+        self.A = self._shift_right(self.A, arithmetic=False)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def lsrb(self, instr: Instruction) -> MemAccess:
+        self.B = self._shift_right(self.B, arithmetic=False)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.B),
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    def rola(self, instr: Instruction) -> MemAccess:
+        self.A = self._rotate_left(self.A)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    def rolb(self, instr: Instruction) -> MemAccess:
+        self.B = self._rotate_left(self.B)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.B),
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    def rora(self, instr: Instruction) -> MemAccess:
+        self.A = self._rotate_right(self.A)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    def rorb(self, instr: Instruction) -> MemAccess:
+        self.B = self._rotate_right(self.B)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.B),
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+        
+      
+    @operand_needed
+    def adda(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        self.A = self._ADD8(self.A, ma.value)
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+        return ma
+
+    @operand_needed
+    def addb(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        self.B = self._ADD8(self.B, ma.value)
+        self._set_ZN_8(self.B)
+
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+        return ma
+
+    @operand_needed
+    def suba(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        self.A = self._SUB8(self.A, ma.value)
+        self._set_ZN_8(self.A)
+        
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+        return ma
+
+    @operand_needed
+    def subb(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        self.B = self._SUB8(self.B, ma.value)
+        self._set_ZN_8(self.B)
+        
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+        return ma
+    
+    @operand_needed
+    def addd(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value16(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        d = ((self.A << 8) | self.B) & 0xFFFF
+        result = (d + ma.value) & 0xFFFF
+        self._set_ZN_8(result)
+        self.C = 1 if d + ma.value > 0xFFFF else 0
+        self.V = 1 if ((~(d ^ ma.value)) & (d ^ result) & 0x8000) != 0 else 0
+        self.A = (result >> 8) & 0xFF
+        self.B = result & 0xFF
+
+        ma.value = result
+        
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+        return ma
+
+    @operand_needed
+    def subd(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value16(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        d = ((self.A << 8) | self.B) & 0xFFFF
+        result = (d - ma.value) & 0xFFFF
+        self._set_ZN_8(result)
+        self.C = 1 if d < ma.value else 0
+        self.V = 1 if ((d ^ ma.value) & (d ^ result) & 0x8000) != 0 else 0
+        self.A = (result >> 8) & 0xFF
+        self.B = result & 0xFF
+
+        ma.value = result
+        
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+        return ma
+
+    @operand_needed
+    def adca(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        carry_in = self.C
+        result = self.A + ma.value + carry_in
+        self._set_ZN_8(result)
+        self.C = 1 if result > 0xFF else 0
+        self.V = 1 if ((self.A ^ result) & (ma.value ^ result) & 0x80) != 0 else 0
+        self.A = result & 0xFF
+
+        ma.value = result
+        #ma.rw = 'W'
+        
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+        return ma
+
+    @operand_needed
+    def adcb(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        carry_in = self.C
+        result = self.B + ma.value + carry_in
+        self._set_ZN_8(result)
+        self.C = 1 if result > 0xFF else 0
+        self.V = 1 if ((self.B ^ result) & (ma.value ^ result) & 0x80) != 0 else 0
+        self.B = result & 0xFF
+
+        ma.value = result
+        ma.rw = 'W'
+        
+        self.PC += instr.size
+        ma.next_instr_addr=self.PC
+        return ma
+
+    def inca(self, instr: Instruction) -> MemAccess:
+        self.A = (self.A + 1) & 0xFF
+        self._set_ZN_8(self.A)
+        
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def incb(self, instr: Instruction) -> MemAccess:
+        self.B = (self.B + 1) & 0xFF
+        self._set_ZN_8(self.B)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.B),
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def deca(self, instr: Instruction) -> MemAccess:
+        self.A = (self.A - 1) & 0xFF
+        self._set_ZN_8(self.A)
+        
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def decb(self, instr: Instruction) -> MemAccess:
+        self.B = (self.B - 1) & 0xFF
+        self._set_ZN_8(self.B)
+        
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.B),
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def inc(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.addr is None or ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        result = (ma.value + 1) & 0xFF
+        self._set_ZN_8(result)
+        self.write8(ma.addr, result)
+
+        ma.value = result
+        ma.rw = 'W'
+        
+        self.PC += instr.size
+        ma.next_instr_addr = self.PC
+        return ma
+    
+    @operand_needed
+    def dec(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.addr is None or ma.value is None:
+            raise ValueError("Invalid memory access")
+        result = (ma.value - 1) & 0xFF
+        self._set_ZN_8(result)
+        self.write8(ma.addr, result)
+        
+        ma.value = result
+        ma.rw = 'W'
+        
+        self.PC += instr.size
+        ma.next_instr_addr = self.PC
+        return ma
+
+    def mul(self, instr: Instruction) -> MemAccess:
+        """Multiply A * B unsigned, result in D (A=high, B=low)"""
+        result = (self.A & 0xFF) * (self.B & 0xFF)
+        self.A = (result >> 8) & 0xFF
+        self.B = result & 0xFF
+        self.Z = 1 if result == 0 else 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=result,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+        
+    def inx(self, instr: Instruction) -> MemAccess:
+        old = self.X
+        self.X = (self.X + 1) & 0xFFFF
+
+        # Flags
+        self._set_ZN_8(self.X)
+        self.V = 1 if old == 0x7FFF and self.X == 0x8000 else 0
+        # C bleibt unverändert
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.X),
+            value=self.X,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+
+    @operand_needed
+    def bra(self, instr: Instruction) -> MemAccess:
+        old_PC = self.PC
+        self.PC = instr.target_value # type: ignore
+
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def beq(self, instr: Instruction) -> MemAccess:
+        old_PC = self.PC
+
+        if self.Z == 1:
+            self.PC = instr.target_value # type: ignore
+        else:
+            self.PC += instr.size
+        
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+        
+        
+    
+    @operand_needed
+    def bne(self, instr: Instruction) -> MemAccess:
+        old_PC = self.PC
+
+        if self.Z == 0:
+            self.PC = instr.target_value # type: ignore
+        else:
+            self.PC += instr.size
+        
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    @operand_needed
+    def bcc(self, instr: Instruction) -> MemAccess:
+        old_PC = self.PC
+
+        if self.C == 0:
+            self.PC = instr.target_value # type: ignore
+        else:
+            self.PC += instr.size
+        
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+
+    @operand_needed
+    def bcs(self, instr: Instruction) -> MemAccess:
+        old_PC = self.PC
+
+        if self.C == 1:
+            self.PC = instr.target_value # type: ignore
+        else:
+            self.PC += instr.size
+        
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    def psha(self, instr: Instruction) -> MemAccess:
+        self.push8(self.A)
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.SP,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    def pshb(self, instr: Instruction) -> MemAccess:
+        self.push8(self.B)
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.SP,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+
+    
+    def pula(self, instr: Instruction) -> MemAccess:
+        self.A = self.pull8()
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.SP,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def pulb(self, instr: Instruction) -> MemAccess:
+        self.B = self.pull8()
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.SP,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+
+    def tab(self, instr: Instruction) -> MemAccess:
+        self._transfer('A', 'B')
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def tba(self, instr: Instruction) -> MemAccess:
+        self._transfer('B', 'A')
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+
+
+    def coma(self, instr: Instruction) -> MemAccess:
+        """One's complement A"""
+        self.A = (~self.A) & 0xFF
+        self._set_ZN_8(self.A)
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def comb(self, instr: Instruction) -> MemAccess:
+        """One's complement B"""
+        self.B = (~self.B) & 0xFF
+        self._set_ZN_8(self.B)
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def nega(self, instr: Instruction) -> MemAccess:
+        self.A = -self.A & 0xFF
+        self._set_ZN_8(self.A)
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def negb(self, instr: Instruction) -> MemAccess:
+        self.B = -self.B & 0xFF
+        self._set_ZN_8(self.B)
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.B,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def nop(self, instr: Instruction) -> MemAccess:
+        """No Operation"""
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=None,
+            rw='',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def cli(self, instr: Instruction) -> MemAccess:
+        """Clear Interrupt Mask (I = 0)"""
+        self.I = 0
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=None,
+            rw='',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def rti(self, instr: Instruction) -> MemAccess:
+        """Return from Interrupt (nur PC, Flags optional)"""
+        old_PC = self.PC
+        self.PC = self.pull16()
+        # Flags ggf. vom Stack holen (optional)
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=None,
+            rw='',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def tst(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        
+        if ma.addr is None or ma.value is None:
+            raise ValueError("Invalid memory access")
+
+
+        # Flags setzen
+        self._set_ZN_8(ma.value)
+        self.V = 0  # Always clear overflow flag
+        # No changes to carry
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=ma.addr,
+            var=self.rom_config.get_by_address(ma.addr),
+            value=ma.value,
+            rw='R',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    # @operand_needed
+    # def daa(self, insn: CsInsn):
+    #     """Decimal Adjust Accumulator (BCD) – einfache Version"""
+    #     if (self.A & 0x0F) > 9:
+    #         self.A += 0x06
+    #     if (self.A & 0xF0) > 0x90 or self.C:
+    #         self.A += 0x60
+    #     self.A &= 0xFF
+    #     self.__set_z(self.A)
+    #     self.PC += insn.size
+
+    def pshx(self, instr: Instruction) -> MemAccess:
+        """Push X auf Stack"""
+        self.push16(self.X)
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.X,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def pulx(self, instr: Instruction) -> MemAccess:
+        """Pull X vom Stack"""
+        self.X = self.pull16()
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.X,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def abx(self, instr: Instruction) -> MemAccess:
+        """Add B to X"""
+        self.X = (self.X + self.B) & 0xFFFF
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.X,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def cpx(self, instr: Instruction) -> MemAccess:
+        """Compare X with value"""
+        ma = self.__read_value16(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        result = (self.X - ma.value) & 0xFFFF
+        self._set_ZN_8(result)
+        self.V = 1 if ((self.X ^ ma.value) & (self.X ^ result) & 0x8000) != 0 else 0
+        self.C = 1 if self.X < ma.value else 0
+
+        old_PC = self.PC
+        self.PC += instr.size  
+        return MemAccess(
+            addr=ma.addr,
+            var=None,
+            value=ma.value,
+            rw='R',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    # @operand_needed
+    # def bsr(self, insn: CsInsn):
+    #     """Branch to Subroutine (relative)"""
+    #     return_addr = self.PC + insn.size
+    #     self.push16(return_addr)
+    #     type, offset = self.dasm.parse_operand(insn.op_str)
+    #     self.PC = offset
+
+    def xgdx(self, instr: Instruction) -> MemAccess:
+        """Exchange D (A+B) with X"""
+        d = (self.A << 8) | self.B
+        self.A = (self.X >> 8) & 0xFF
+        self.B = self.X & 0xFF
+        self.X = d
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.X,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+  
+
+    def sec(self, instr: Instruction) -> MemAccess:
+        """Set Carry Flag (C = 1)"""
+        self.C = 1
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.C,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    def clc(self, instr: Instruction) -> MemAccess:
+        """Clear Carry Flag (C = 0)"""
+        self.C = 0
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.C,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    
+    @operand_needed
+    def jmp(self, instr: Instruction) -> MemAccess:
+        old_PC = self.PC
+        self.PC = instr.target_value # type: ignore
+
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def jsr(self, instr: Instruction) -> MemAccess:
+        ret = (self.PC + instr.size) & 0xFFFF
+
+        self.push16(ret)
+
+
+        #self._call_stack.append((self.PC, addr))
+        old_PC = self.PC
+        self.PC:int = instr.target_value # type: ignore
+        return MemAccess(
+            addr=self.PC,
+            var=self.rom_config.get_by_address(self.PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+
+    
+
+    def rts(self, instr: Instruction) -> MemAccess:
+        new_PC = self.pull16()
+
+        old_PC = self.PC
+        self.PC = new_PC
+
+        #if self._call_stack:
+        #    self._call_stack.pop()
+
+        # Check if we're on a top function, adjust return address for visualization
+        if new_PC == 0xFFFF:
+            new_PC = old_PC
+           
+        return MemAccess(
+            addr=new_PC,
+            var=self.rom_config.get_by_address(new_PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=new_PC
+        )
+
+    def sei(self, instr: Instruction) -> MemAccess:
+        self.logger.warning("Command sei has currently no effect!")
+        self.I = 1
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=None,
+            value=self.I,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+
+
+
+    '''
+          # --- A handful of core instructions (erweiterbar) ---
+        if instr.mnemonic == "nop":
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+
+
+        if mnem == "ldd":  # 16-bit -> A:B
+            val16 = self._read_operand16(ops)
+            self.A = (val16 >> 8) & 0xFF
+            self.B = val16 & 0xFF
+            self.flags.Z = 1 if val16 == 0 else 0
+            self.flags.N = 1 if (val16 & 0x8000) else 0
+            self.flags.V = 0
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "ldx":
+            val16 = self._read_operand16(ops)
+            self.X = val16 & 0xFFFF
+            self.flags.Z = 1 if self.X == 0 else 0
+            self.flags.N = 1 if (self.X & 0x8000) else 0
+            self.flags.V = 0
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+
+        if mnem == "std":
+            addr = self._addr_from_operand(ops, bits=16)
+            self.write16(addr, ((self.A & 0xFF) << 8) | (self.B & 0xFF))
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "stx":
+            addr = self._addr_from_operand(ops, bits=16)
+            self.write16(addr, self.X)
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "anda":
+            v = self._read_operand8(ops)
+            self.A = self._AND8(self.A, v)
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "andb":
+            v = self._read_operand8(ops)
+            self.B = self._AND8(self.B, v)
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "oraa":
+            v = self._read_operand8(ops)
+            self.A = self._OR8(self.A, v)
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "orab":
+            v = self._read_operand8(ops)
+            self.B = self._OR8(self.B, v)
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "cmpa":
+            v = self._read_operand8(ops)
+            _ = self._SUB8(self.A, v)
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "cmpb":
+            v = self._read_operand8(ops)
+            _ = self._SUB8(self.B, v)
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "tst":  # test mem or reg: we support direct mem test here
+            v = self._read_operand8(ops)
+            self._set_ZN_8(v); self.flags.V = 0
+            self.PC = (self.PC + instr.size) & 0xFFFF
+            return
+
+        if mnem == "psha":
+            self.push8(self.A); self.PC = (self.PC + instr.size) & 0xFFFF; return
+        if mnem == "pshb":
+            self.push8(self.B); self.PC = (self.PC + instr.size) & 0xFFFF; return
+        if mnem == "pula":
+            self.A = self.pull8(); self._set_ZN_8(self.A); self.PC = (self.PC + instr.size) & 0xFFFF; return
+        if mnem == "pulb":
+            self.B = self.pull8(); self._set_ZN_8(self.B); self.PC = (self.PC + instr.size) & 0xFFFF; return
+
+        if mnem == "rts":
+            self._rts(); return
+
+        if mnem == "jsr":
+            target = self._abs_from_operand(ops)
+            # Mock interception?
+            if target in self._mocked:
+                # Simuliere Call: Push Rücksprung, springe in Mock
+                ret = (self.PC + insn.size) & 0xFFFF
+                self.push16(ret)
+                self._mockedtarget
+                return
+            self._jsr(insn, target)
+            return
+
+        if mnem == "jmp":
+            target = self._abs_from_operand(ops)
+            self._jmp(target); return
+
+        # Relative Branches (8 Bit): beq/bne/bcc/bcs/bra
+        if mnem in ("beq", "bne", "bcc", "bcs", "bra"):
+            take = False
+            if mnem == "beq": take = (self.flags.Z == 1)
+            if mnem == "bne": take = (self.flags.Z == 0)
+            if mnem == "bcc": take = (self.flags.C == 0)
+            if mnem == "bcs": take = (self.flags.C == 1)
+            if mnem == "bra": take = True
+            if take:
+                # Capstone liefert op_str meist schon als $ADDR; wir rechnen fallback relativ:
+                if ops.startswith("$"):
+                    self.PC = int(ops[1:], 16) & 0xFFFF
+                else:
+                    # 2. Byte als signed offset
+                    # Wir lesen direkt aus Speicher (PC+1)
+                    rel = self.read8((self.PC + 1) & 0xFFFF)
+                    if rel & 0x80: rel -= 0x100
+                    self.PC = (self.PC + insn.size + rel) & 0xFFFF
+            else:
+                self.PC = (self.PC + insn.size) & 0xFFFF
+            return
+
+        # Fallback: unimplemented
+        raise NotImplementedError(f"Unsupported instruction {mnem} {ops} at ${self.PC:04X}")
+        '''

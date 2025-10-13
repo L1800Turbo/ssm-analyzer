@@ -1,0 +1,46 @@
+{
+  "version": "0.1",
+  "functions": [
+    {
+      "name": "wait_ms",
+      "pattern": [
+        { "mnemonic": "pshx" },
+        { "max_skip": 3 },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "jsr", "op_str": "FN{mul16bit}" },
+        { "mnemonic": "ldd" },
+        { "mnemonic": "jsr", "op_str": "FN{divide}" }
+      ]
+    },
+    {
+      "name": "select_system",
+      "depends_on": ["wait_ms"],
+      "pattern": [
+        { "mnemonic": "ldx", "op_str": "REF{str_select_system}" },
+        { "mnemonic": "jsr", "op_str": "FN{print_upper_screen}" },
+        { "mnemonic": "jsr" },
+        { "mnemonic": "ldaa", "op_str": "VAR{current_selected_device}" }
+      ],
+      "description": "SELECT SYSTEM Function"
+    },
+    {
+      "name": "print_upper_screen",
+      "depends_on": ["select_system"],
+      "start_address": "REF{print_upper_screen}",
+      "pattern": [
+        { "mnemonic": "psha" },
+        { "mnemonic": "pshb" },
+        { "mnemonic": "pshx" },
+        { "mnemonic": "stx" },
+        { "mnemonic": "ldab", "op_str": 0 },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "abx"},
+        { "mnemonic": "ldaa" },
+        { "mnemonic": "ldx", "op_str": "VAR{ssm_display_y0_x0}" }
+      ]
+    }
+  ],
+  "strings": {
+    "str_select_system": " SELECT SYSTEM  "
+  }
+}
