@@ -37,7 +37,44 @@
         { "mnemonic": "abx"},
         { "mnemonic": "ldaa" },
         { "mnemonic": "ldx", "op_str": "VAR{ssm_display_y0_x0}" }
-      ]
+      ],
+      "additional_vars": {
+        "VAR{ssm_display_y0_x1}": "REF{ssm_display_y0_x0}+1",
+        "VAR{ssm_display_y0_x2}": "REF{ssm_display_y0_x0}+2",
+        "VAR{ssm_display_y0_x3}": "REF{ssm_display_y0_x0}+3",
+        "VAR{ssm_display_y0_x4}": "REF{ssm_display_y0_x0}+4",
+        "VAR{ssm_display_y0_x5}": "REF{ssm_display_y0_x0}+5",
+        "VAR{ssm_display_y0_x6}": "REF{ssm_display_y0_x0}+6",
+        "VAR{ssm_display_y0_x7}": "REF{ssm_display_y0_x0}+7",
+        "VAR{ssm_display_y0_x8}": "REF{ssm_display_y0_x0}+8",
+        "VAR{ssm_display_y0_x9}": "REF{ssm_display_y0_x0}+9",
+        "VAR{ssm_display_y0_x10}": "REF{ssm_display_y0_x0}+10",
+        "VAR{ssm_display_y0_x11}": "REF{ssm_display_y0_x0}+11",
+        "VAR{ssm_display_y0_x12}": "REF{ssm_display_y0_x0}+12",
+        "VAR{ssm_display_y0_x13}": "REF{ssm_display_y0_x0}+13",
+        "VAR{ssm_display_y0_x14}": "REF{ssm_display_y0_x0}+14",
+        "VAR{ssm_display_y0_x15}": "REF{ssm_display_y0_x0}+15",
+
+        "VAR{ssm_display_y1_x0}": "REF{ssm_display_y0_x0}+16",
+        
+        "VAR{ssm_display_y1_x1}": "REF{ssm_display_y1_x0}+1",
+        "VAR{ssm_display_y1_x2}": "REF{ssm_display_y1_x0}+2",
+        "VAR{ssm_display_y1_x3}": "REF{ssm_display_y1_x0}+3",
+        "VAR{ssm_display_y1_x4}": "REF{ssm_display_y1_x0}+4",
+        "VAR{ssm_display_y1_x5}": "REF{ssm_display_y1_x0}+5",
+        "VAR{ssm_display_y1_x6}": "REF{ssm_display_y1_x0}+6",
+        "VAR{ssm_display_y1_x7}": "REF{ssm_display_y1_x0}+7",
+        "VAR{ssm_display_y1_x8}": "REF{ssm_display_y1_x0}+8",
+        "VAR{ssm_display_y1_x9}": "REF{ssm_display_y1_x0}+9",
+        "VAR{ssm_display_y1_x10}": "REF{ssm_display_y1_x0}+10",
+        "VAR{ssm_display_y1_x11}": "REF{ssm_display_y1_x0}+11",
+        "VAR{ssm_display_y1_x12}": "REF{ssm_display_y1_x0}+12",
+        "VAR{ssm_display_y1_x13}": "REF{ssm_display_y1_x0}+13",
+        "VAR{ssm_display_y1_x14}": "REF{ssm_display_y1_x0}+14",
+        "VAR{ssm_display_y1_x15}": "REF{ssm_display_y1_x0}+15"
+
+      }
+      
     }
   ],
   "strings": {

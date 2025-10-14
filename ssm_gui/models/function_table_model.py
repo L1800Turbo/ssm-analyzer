@@ -48,7 +48,7 @@ class FunctionTableModel(QAbstractTableModel):
                 items: List[str] = []
                 for a in sorted(f.callers):
                     fi = self._func_map.get(a)
-                    items.append(fi.name if fi else f"${a:04X}")
+                    items.append(fi.name if fi else f"0x{a:04X}")
                 return ", ".join(items)
         if role == Qt.ItemDataRole.TextAlignmentRole and col == 1:
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)

@@ -113,13 +113,14 @@ class RomConfig:
 
     # Optional: Iteration nach Typ
     def all_ports(self):
-        return {k: v for k, v in self._by_name.items() if v.type == "port"}
+        return {k: v for k, v in self._by_name.items() if v.type == RomVarType.PORT}
 
     def all_functions(self):
-        return {k: v for k, v in self._by_name.items() if v.type == "function"}
+        return {k: v for k, v in self._by_name.items() if v.type == RomVarType.FUNCTION}
     
     def all_vars(self):
-        return {k: v for k, v in self._by_name.items() if v.type == "var"}
+        return {k: v for k, v in self._by_name.items() if v.type == RomVarType.VARIABLE}
 
+    # TODO Wohl noch mit dem Mem-Reader vereinen
     def get_offset_value(self, dev: CurrentSelectedDevice, value: int):
         return value if value >= 0x8000 else value + self._offsets[dev]

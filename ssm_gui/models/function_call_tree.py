@@ -10,7 +10,7 @@ class FunctionCallTreeModel(QStandardItemModel):
         for addr, subtree in tree.items():
             fn_name = functions.get(addr).name if addr in functions else f"${addr:04X}"
             item = QStandardItem(fn_name)
-            addr_item = QStandardItem(f"${addr:04X}")
+            addr_item = QStandardItem(f"0x{addr:04X}")
             parent_item.appendRow([item, addr_item])
             if subtree:
                 self._populate(subtree, item, functions)

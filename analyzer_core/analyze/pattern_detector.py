@@ -1,8 +1,10 @@
 # SignatureEngine
 # Window-based matcher: skip, capture VAR/FN/REF, min_skip, alternatives. Returns SignatureResult.
 
+import ast
 import logging
 from pathlib import Path
+import re
 from typing import List, Dict, Any, Optional
 
 from analyzer_core.config.rom_config import RomConfig
@@ -48,6 +50,9 @@ class PatternDetector:
                     raise SignatureError(f"Signature {name} doesn't contain a pattern")
                 pattern = sig["pattern"]
 
+                # We need a copy to pop elements from and not to disturb the original by-refence list
+                current_instructions = list(instructions)
+
                 # When using a start_address, we skip until that point
                 start_address = sig.get("start_address", None)
                 if start_address:
@@ -65,13 +70,13 @@ class PatternDetector:
                     elif type(start_address) != int:
                         raise SignatureError(f"Unknown start_address for {name}")
                     
-                    while instructions[0].address < start_address:
-                        instructions.pop(0)
-                        if len(instructions) == 0:
+                    while current_instructions[0].address < start_address:
+                        current_instructions.pop(0)
+                        if len(current_instructions) == 0:
                             raise SignatureNotFound(f"Start address 0x{start_address:04X} for {name} is invalid.")
 
 
-                pattern_match = self.__detect_current_pattern(name, instructions, pattern)
+                pattern_match = self.__detect_current_pattern(name, current_instructions, pattern)
 
                 if pattern_match:
                     self.logger.debug(f"Found {name} function at 0x{pattern_match['funcs'][name]:02X}")
@@ -80,6 +85,17 @@ class PatternDetector:
                         self.rom_cfg.add_var_address(varname, addr)
                     for funcname, addr in pattern_match.get("funcs", {}).items():
                         self.rom_cfg.add_function_address(funcname, addr)
+                
+                    # After setting the addresses
+                    # Check for additional variable/function definition and add it
+                    additional_vars_list = sig.get("additional_vars", None)
+                    if additional_vars_list:
+                        additional = self._parse_additional_vars(additional_vars_list)
+
+                        # for varname, addr in additional.get("vars", {}).items():
+                        #     self.rom_cfg.add_var_address(varname, addr)
+                        # for funcname, addr in additional.get("funcs", {}).items():
+                        #     self.rom_cfg.add_function_address(funcname, addr)
 
                     self.found_signatures.add(name)
                     missing.remove(name)
@@ -238,4 +254,27 @@ class PatternDetector:
             "funcs": funcs_found,
             "refs": refs_found,
         }
+    
+    def _parse_additional_vars(self, additional_vars:dict[str, str]) -> None:
+        #vars_found: Dict[str, int] = {}
+        #funcs_found: Dict[str, int] = {}
+
+        def replace_ref(match:re.Match) -> str:
+            ref_name = match.group(1)
+            ref_var = self.rom_cfg.get_by_name(ref_name)
+            if not ref_var:
+                raise SignatureError(f"Reference {ref_name} in Config not found")
+            return str(ref_var.address)
+
+        for var_name_ref, var_address_ref in additional_vars.items():
+            if str(var_name_ref).startswith("VAR{"):
+                var_name = var_name_ref[4:-1]
+                var_address_calc = re.sub(r"REF\{(.*?)\}", replace_ref, var_address_ref)
+
+                # TODO für Eval auch später die Adressbereiche prüfen
+                self.rom_cfg.add_var_address(var_name, eval(var_address_calc))
+                #vars_found[var_name] = eval(var_address_calc)
+            else:
+                raise NotImplementedError("Only VAR{...} is implemented so far...")
+        
 
