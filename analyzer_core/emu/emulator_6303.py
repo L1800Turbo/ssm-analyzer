@@ -56,13 +56,15 @@ class Emulator6303:
         self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom)
 
         self.memory_map = memory_map if memory_map else MemoryMap([
-                MemoryRegion(start=0x0000, end=0x1FFF, kind=RegionKind.RAM, name="RAM"),         # 8 KB RAM
-                MemoryRegion(start=0x8000, end=0xFFFF, kind=RegionKind.ROM, name="ROM"),         # 32 KB ROM ab 0x8000
-                # Optional: IO, MAPPED_ROM, etc.
+                MemoryRegion(start=0x0000, end=0x1FFF, kind=RegionKind.RAM, name="RAM"),               # 8 KB RAM TODO weniger
+                MemoryRegion(start=0x2000, end=0x3FFF, kind=RegionKind.MAPPED_ROM, name="MAPPED_ROM"), # 8 KB Mapped ROM from 0x2000, needs to be attached first
+                MemoryRegion(start=0x8000, end=0xFFFF, kind=RegionKind.ROM, name="ROM"),               # 32 KB ROM from 0x8000
+                
+                # Optional: IO, TODO
             ])
         self.mem = MemoryManager(self.memory_map, rom_image)
         self.hooks = hooks or HookManager()
-        self.tracer = tracer or ExecutionTracer()
+        self.tracer = tracer or ExecutionTracer() # TODO Tracer einbauen
         self.rom_config = rom_config or RomConfig()
 
         # Register
@@ -129,6 +131,7 @@ class Emulator6303:
     
     def set_pc(self, addr: int) -> None:
         self.PC = addr & 0xFFFF
+        # TODO Hier auch die Memorymap einbauen falls mapped_memory genommen wird!
 
     def read8(self, addr: int) -> int:
         val = self.mem.read(addr & 0xFFFF) & 0xFF
@@ -1058,7 +1061,7 @@ class Emulator6303:
         result = (self.A & 0xFF) * (self.B & 0xFF)
         self.A = (result >> 8) & 0xFF
         self.B = result & 0xFF
-        self.Z = 1 if result == 0 else 0
+        self.flags.Z = 1 if result == 0 else 0
 
         old_PC = self.PC
         self.PC += instr.size
@@ -1115,7 +1118,7 @@ class Emulator6303:
     def beq(self, instr: Instruction) -> MemAccess:
         old_PC = self.PC
 
-        if self.Z == 1:
+        if self.flags.Z == 1:
             self.PC = instr.target_value # type: ignore
         else:
             self.PC += instr.size
@@ -1136,7 +1139,7 @@ class Emulator6303:
     def bne(self, instr: Instruction) -> MemAccess:
         old_PC = self.PC
 
-        if self.Z == 0:
+        if self.flags.Z == 0:
             self.PC = instr.target_value # type: ignore
         else:
             self.PC += instr.size
@@ -1666,7 +1669,7 @@ class Emulator6303:
             val16 = self._read_operand16(ops)
             self.A = (val16 >> 8) & 0xFF
             self.B = val16 & 0xFF
-            self.flags.Z = 1 if val16 == 0 else 0
+            self.flags.flags.Z = 1 if val16 == 0 else 0
             self.flags.N = 1 if (val16 & 0x8000) else 0
             self.flags.V = 0
             self.PC = (self.PC + instr.size) & 0xFFFF
@@ -1675,7 +1678,7 @@ class Emulator6303:
         if mnem == "ldx":
             val16 = self._read_operand16(ops)
             self.X = val16 & 0xFFFF
-            self.flags.Z = 1 if self.X == 0 else 0
+            self.flags.flags.Z = 1 if self.X == 0 else 0
             self.flags.N = 1 if (self.X & 0x8000) else 0
             self.flags.V = 0
             self.PC = (self.PC + instr.size) & 0xFFFF
@@ -1767,8 +1770,8 @@ class Emulator6303:
         # Relative Branches (8 Bit): beq/bne/bcc/bcs/bra
         if mnem in ("beq", "bne", "bcc", "bcs", "bra"):
             take = False
-            if mnem == "beq": take = (self.flags.Z == 1)
-            if mnem == "bne": take = (self.flags.Z == 0)
+            if mnem == "beq": take = (self.flags.flags.Z == 1)
+            if mnem == "bne": take = (self.flags.flags.Z == 0)
             if mnem == "bcc": take = (self.flags.C == 0)
             if mnem == "bcs": take = (self.flags.C == 1)
             if mnem == "bra": take = True

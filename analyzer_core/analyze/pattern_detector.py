@@ -40,8 +40,16 @@ class PatternDetector:
 
                 if name in self.found_signatures:
                     continue
+
+                # If it's not missing any more
+                if name not in missing:
+                    continue
+
                 # If none of the depends_on is not yet found, skip this step
                 if "depends_on" in sig and not any(dep in self.found_signatures for dep in sig["depends_on"]):
+                    # Check if they actually do exist
+                    if not any(dep in signatures for dep in sig["depends_on"]):
+                        raise SignatureError(f"Pattern {name} seems to depend on {sig["depends_on"]}, but none does exist.")
                     continue
 
                 # TODO testen, ob überhaupt möglich mit depends_on: Mal was willkürliches ausprobieren
@@ -90,18 +98,21 @@ class PatternDetector:
                     # Check for additional variable/function definition and add it
                     additional_vars_list = sig.get("additional_vars", None)
                     if additional_vars_list:
-                        additional = self._parse_additional_vars(additional_vars_list)
+                        self._parse_additional_vars(additional_vars_list)
 
-                        # for varname, addr in additional.get("vars", {}).items():
-                        #     self.rom_cfg.add_var_address(varname, addr)
-                        # for funcname, addr in additional.get("funcs", {}).items():
-                        #     self.rom_cfg.add_function_address(funcname, addr)
+                    # If we got mutual patterns, we remove the other ones, they don't need to be detected anymor
+                    if "replaces" in sig:
+                        for repl in sig["replaces"]: 
+                            missing.remove(repl)
 
                     self.found_signatures.add(name)
                     missing.remove(name)
                     
                 else:
-                    raise SignatureNotFound(f"Pattern {name} not found")
+                    # TODO Anpassen: Nciht pauschal abbrechen, sondern den problematischen raus nehmen
+                    #raise SignatureNotFound(f"Pattern {name} not found")
+                    missing.remove(name)
+                    self.logger.error(f"Pattern {name} not found")
 
     def __detect_current_pattern(self, name: str, instructions: List[Instruction], pattern: List[Dict[str, Any]]) -> Optional[Dict[str, Dict[str, int]]]:
         # Inspect current pattern
@@ -121,6 +132,8 @@ class PatternDetector:
             # if cur_instr.address < 0xBD84:
             #     instr_idx += 1
             #     continue
+            if cur_instr.address == 0x88DB:
+                pass
 
             # TODO: Er muss noch die passende Startadresse einlesen können, um nicht bei 0 anzufangen!
 
@@ -181,6 +194,10 @@ class PatternDetector:
                     funcs_found.update(findings.get("funcs", {}))
                     refs_found.update(findings.get("refs", {}))
                 else:
+                    if pattern_idx > 3:
+                        self.logger.info(f"Didn't find pattern for {name} beyond {instructions[instr_idx].address:#04X} yet, but got {pattern_idx} matched lines. "
+                                         f"Instruction: '{instructions[instr_idx].mnemonic} {instructions[instr_idx].op_str}'.")
+
                     # Keep instruction position, but restart with pattern
                     first_instr_addr = None
                     instr_idx += 1
@@ -200,8 +217,6 @@ class PatternDetector:
                     "refs": refs_found,
                 }
         
-        if pattern_idx > 2:
-            self.logger.debug(f"Didn't find pattern for {name} above {instr_idx:04X}, but got {pattern_idx} matched lines.")
         return None
             
 
@@ -217,8 +232,23 @@ class PatternDetector:
                     raise SignatureError(f"Function {fn_name} in signature {name} has no target value in assembly.")
             return cur_instr.target_value
         
-        if cur_instr.mnemonic != search_pattern["mnemonic"]:
-            # Mnemonic doesn't match
+        def to_int(value):
+            if isinstance(value, int):
+                return value
+            if isinstance(value, str):
+                value = value.strip().lower()
+                if value.startswith("0x"):
+                    return int(value, 16)
+                else:
+                    return int(value, 10)
+            return None
+        
+        # Check if mnemonic matches, on multiple possibilities, they're bound in a list
+        expected_mnemonic = search_pattern["mnemonic"]
+        if isinstance(expected_mnemonic, list):
+            if cur_instr.mnemonic not in expected_mnemonic:
+                return None
+        elif cur_instr.mnemonic != expected_mnemonic:
             return None
         # 3. VAR/FN/REF im op_str
         op_str = search_pattern.get("op_str", None) # Distinguish between None and "None" as value given by the json
@@ -243,8 +273,10 @@ class PatternDetector:
                     return None  # Reference doesn't match
             #elif op_str == "None":
             #    pass
-            elif type(op_str) == int:
-                if int(op_str) == cur_instr.target_value:
+            #elif type(op_str) == int:
+            #    if int(op_str) == cur_instr.target_value:
+            #        pass
+            elif to_int(op_str) == cur_instr.target_value:
                     pass
             else:
                 return None

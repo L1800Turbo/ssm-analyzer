@@ -23,6 +23,16 @@ class RomVarDefinition:
 # TODO Noch sinnvoll hier:
 # RomVarType enthalt jetzt STIRNGS, aber was ist mit Adressen wie z.B. einer Mastertabelle und sowas? Also alles, was irgendwie "fix" im ROM klebt
 
+
+OFFSET_PIN_ASSIGNMENTS = [
+    {"p5_2": 0, "p6_7": 0, "offset": -0x2000},
+    {"p5_2": 1, "p6_7": 0, "offset": 0x0000},
+    {"p5_2": 0, "p6_7": 1, "offset": 0x2000},
+    {"p5_2": 0, "p6_7": 1, "offset": 0x2000},
+    {"p5_2": 1, "p6_7": 1, "offset": 0x4000},
+    {"p5_2": 1, "p6_7": 1, "offset": 0x4000},
+]
+
 class RomConfig:
 
     def __init__(self):
@@ -34,7 +44,7 @@ class RomConfig:
         # Devices that actually exist on the cassette
         self.selectable_devices: list[CurrentSelectedDevice] = []
 
-        self._offsets: dict[CurrentSelectedDevice, int] = {}
+        self.__offsets: dict[CurrentSelectedDevice, int] = {}
         self.romid_tables: dict[CurrentSelectedDevice, RomIdTableInfo] = {}
 
         # Ports/DDR
@@ -120,7 +130,10 @@ class RomConfig:
     
     def all_vars(self):
         return {k: v for k, v in self._by_name.items() if v.type == RomVarType.VARIABLE}
-
-    # TODO Wohl noch mit dem Mem-Reader vereinen
-    def get_offset_value(self, dev: CurrentSelectedDevice, value: int):
-        return value if value >= 0x8000 else value + self._offsets[dev]
+    
+    # ------------------- ROM Offsets -------------------
+    def add_offset(self, dev: CurrentSelectedDevice, offset: int):
+        self.__offsets[dev] = offset
+    
+    def get_offset(self, dev: CurrentSelectedDevice) -> int:
+        return self.__offsets[dev]

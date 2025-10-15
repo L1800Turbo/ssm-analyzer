@@ -123,14 +123,14 @@ class Disassembler630x:
                     subtree = tree.setdefault(callee, {})                        
 
                     if instr.target_type == OperandType.INDIRECT:
-                        self.logger.info(f"Indirect function call to {instr.target_value:#04x}, only possible in emulation")
+                        self.logger.info(f"Indirect function call from {instr.address:#04x} to {instr.target_value:#04x}, only possible in emulation")
                     else:
                         worklist.append((callee, callee, subtree))
 
                 # Jump (jmp, lbra) -> only take the target and break
                 if instr.is_jump and instr.target_value is not None:
                     if instr.target_type == OperandType.INDIRECT:
-                        self.logger.warning(f"Indirect jump to {instr.target_value:#04x}, only possible in emulation!")
+                        self.logger.warning(f"Indirect jump from {instr.address:#04x} to {instr.target_value:#04x}, only possible in emulation!")
                     else:
                         worklist.append((instr.target_value, func_entry, tree))
                     break

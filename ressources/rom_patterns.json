@@ -56,7 +56,7 @@
         "VAR{ssm_display_y0_x15}": "REF{ssm_display_y0_x0}+15",
 
         "VAR{ssm_display_y1_x0}": "REF{ssm_display_y0_x0}+16",
-        
+
         "VAR{ssm_display_y1_x1}": "REF{ssm_display_y1_x0}+1",
         "VAR{ssm_display_y1_x2}": "REF{ssm_display_y1_x0}+2",
         "VAR{ssm_display_y1_x3}": "REF{ssm_display_y1_x0}+3",
@@ -74,7 +74,212 @@
         "VAR{ssm_display_y1_x15}": "REF{ssm_display_y1_x0}+15"
 
       }
-      
+    },
+    {
+      "name": "attach_ssm_comm_type",
+      "depends_on": ["print_upper_screen"],
+      "pattern": [
+        { "mnemonic": "clr",  "op_str": "VAR{no_success_on_first_connection_flag}" },
+        { "max_skip": 1 },
+        { "mnemonic": "ldaa", "op_str": "REF{current_selected_device}" },
+        { "mnemonic": "bita" },
+        { "mnemonic": ["beq", "bne"]},
+        { "max_skip": 2 },
+        { "mnemonic": "ldab"},
+        { "mnemonic": "stab", "op_str": "VAR{current_ssm_protocol_version}" },
+        { "mnemonic": "ldx"},
+        { "mnemonic": "lsra" },
+        { "mnemonic": "bcs" },
+        { "mnemonic": "inx" },
+        { "mnemonic": "bra"},
+        { "mnemonic": "ldab", "op_str": 0 },
+        { "mnemonic": "stab", "op_str": "VAR{current_ssm_cmd}" }
+      ],
+      "description": "fn_attach_ssm_cmd_commType: setzt anhand des aktuellen Gerätes den SSM-Protokolltyp und initialisiert die Befehls-Tabelle."
+    },
+    {
+      "name": "set_communication_protocol",
+      "depends_on": ["attach_ssm_comm_type"],
+      "pattern": [
+        { "mnemonic": "ldaa", "op_str": "REF{current_ssm_protocol_version}" },
+        { "mnemonic": "cmpa", "op_str": 2 },
+        { "mnemonic": "beq" },
+        { "mnemonic": "jsr" },
+        { "mnemonic": "jsr" }
+      ]
+    },
+    {
+        "name": "set_address_offsets",
+        "depends_on": ["set_communication_protocol"],
+        "pattern": [
+            {"mnemonic": "ldab", "op_str": "REF{PORT5}"},
+            {"mnemonic": "andb", "op_str": "0xFB" },
+            {"mnemonic": "stab", "op_str": "REF{PORT5}"},
+            {"mnemonic": "ldab", "op_str": "REF{PORT6}"},
+            {"mnemonic": "andb", "op_str": "0x7F"},
+            {"mnemonic": "stab", "op_str": "REF{PORT6}"},
+            {"mnemonic": "ldaa", "op_str": "REF{current_selected_device}"}
+        ]
+    },
+    {
+        "name": "attach_romid_table_ptr",
+        "depends_on": ["set_address_offsets"],
+        "pattern": [
+            {"mnemonic": "ldaa", "op_str": "REF{current_selected_device}"},
+            {"mnemonic": "cmpa" },
+            {"mnemonic": "bne" },
+            {"mnemonic": "ldx" },
+            {"mnemonic": "stx", "op_str": "VAR{romid_table_ptr}"},
+            {"mnemonic": "ldab" },
+            {"mnemonic": "stab", "op_str": "VAR{romid_table_max_index}"}
+        ]
+    },
+    {
+      "name": "attempt_communication_set_SSM_tx_bytes",
+      "depends_on": ["attach_romid_table_ptr"],
+      "pattern": [
+        { "mnemonic": "sei" },
+        { "mnemonic": "ldd" },
+        { "mnemonic": "std",  "op_str": "VAR{ssm_rx_byte_0}" },
+        { "mnemonic": "ldaa", "op_str": "REF{current_ssm_cmd}" },
+        { "mnemonic": "staa", "op_str": "VAR{ssm_tx_byte_0}" },
+        { "mnemonic": "ldd" },
+        { "mnemonic": "std",  "op_str": "VAR{ssm_tx_byte_1}" },
+        { "mnemonic": "ldab", "op_str": "REF{current_selected_device}" }
+      ],
+      "additional_vars": {
+        "VAR{ssm_tx_byte_2}": "REF{ssm_tx_byte_1}+1",
+        "VAR{ssm_tx_byte_3}": "REF{ssm_tx_byte_2}+1",
+        "VAR{ssm_rx_byte_1}": "REF{ssm_rx_byte_0}+1",
+        "VAR{ssm_rx_byte_2}": "REF{ssm_rx_byte_1}+1"
+      },
+      "description": "attempt_communication_set_SSM_tx_bytes: setzt die ersten Bytes für den SSM-Transfer (rx=FFFF, tx[0]=current_ssm_cmd, tx[1]=0x8000, Auswahl anhand current_selected_device)."
+    },
+    {
+      "name": "attempt_communication_set_SSM_tx_bytes_loopPart",
+      "depends_on": ["attempt_communication_set_SSM_tx_bytes"],
+      "pattern": [
+        { "mnemonic": "tst", "op_str": "VAR{ssm_receive_status}" },
+        { "mnemonic": "beq" },
+        { "mnemonic": "ldx", "op_str": "REF{ssm_rx_byte_0}" },
+        { "mnemonic": "cpx", "op_str": "REF{ssm_tx_byte_1}" },
+        { "mnemonic": "bne" }
+      ],
+      "start_address": "REF{attempt_communication_set_SSM_tx_bytes}"
+    },
+    {
+      "name": "request_romid_save_romid",
+      "depends_on": ["attempt_communication_set_SSM_tx_bytes_loopPart"],
+      "pattern": [
+        { "mnemonic": "sei" },
+        { "mnemonic": "ldd" },
+        { "mnemonic": "std",  "op_str": "REF{ssm_rx_byte_0}" },
+        { "mnemonic": "staa", "op_str": "REF{ssm_rx_byte_2}" },
+        { "mnemonic": "ldaa", "op_str": "VAR{ssm_ask_romid_cmd}" },
+        { "mnemonic": "staa", "op_str": "REF{ssm_tx_byte_0}" },
+        { "mnemonic": "ldd" },
+        { "mnemonic": "std",  "op_str": "REF{ssm_tx_byte_1}" },
+        { "mnemonic": "ldab", "op_str": "REF{current_selected_device}" }
+      ],
+      "description": "request_romid_save_romid"
+    },
+    {
+      "name": "search_matching_romid_96",
+      "depends_on": ["request_romid_save_romid"],
+      "replaces": ["search_matching_romid_97"],
+      "pattern": [
+        { "mnemonic": "ldx", "op_str": "REF{romid_table_ptr}" },
+        { "mnemonic": "clr" },
+        { "mnemonic": "clr", "op_str": "VAR{romid_EGi_Axxx_scheme}" },
+        { "mnemonic": "ldaa", "op_str": "REF{current_selected_device}" }
+      ],
+      "description": ""
+    },
+    {
+      "name": "search_matching_romid_97",
+      "depends_on": ["request_romid_save_romid"],
+      "replaces": ["search_matching_romid_96"],
+      "pattern": [
+        { "mnemonic": "ldx", "op_str": "REF{romid_table_ptr}" },
+        { "mnemonic": "clr" },
+        { "mnemonic": "clr", "op_str": "VAR{romid_EGi_Axxx_scheme}" },
+        { "mnemonic": "clr", "op_str": "VAR{romid_AT_Axxx_scheme}" },
+        { "mnemonic": "ldaa", "op_str": "REF{current_selected_device}" }
+      ],
+      "description": "Special pattern for 1997 ROMs"
+    },
+    {
+      "name": "search_matching_romid_part",
+      "depends_on": ["search_matching_romid_96", "search_matching_romid_97"],
+      "pattern": [
+        { "mnemonic": "pulx" },
+        { "mnemonic": "stx",  "op_str": "VAR{current_romid_line_pointer}" },
+        { "mnemonic": "ldd",  "op_str": "VAR{romid_0}" },
+        { "mnemonic": "std",  "op_str": "VAR{romid_0_2}" }
+      ],
+      "additional_vars": {
+        "VAR{romid_1}": "REF{romid_0}+1",
+        "VAR{romid_1_2}": "REF{romid_0_2}+1",
+        "VAR{romid_2}": "REF{romid_1}+1",
+        "VAR{romid_2_2}": "REF{romid_1_2}+1"
+      },
+      "description": "Small pattern of the RomID check part, comes up several times to find the RomID variables TODO Startadresse geht nicht"
+    },
+    {
+      "name": "set_current_romid_values",
+      "depends_on": ["search_matching_romid_part"],
+      "pattern": [
+        { "mnemonic": "ldx",  "op_str": "REF{current_romid_line_pointer}" },
+        { "max_skip": 19, "min_skip": [0, 10] },
+        { "mnemonic": "ldd",  "op_str": "0x03" },
+        { "mnemonic": "staa", "op_str": "VAR{current_romid_scaling_index}" },
+        { "mnemonic": "stab", "op_str": "VAR{current_romid_label_index}" },
+        { "mnemonic": "ldaa", "op_str": "0x05" },
+        { "mnemonic": "staa", "op_str": "VAR{current_romid_menuitems_Index}" },
+        { "mnemonic": "ldd",  "op_str": "0x08" },
+        { "mnemonic": "std",  "op_str": "VAR{current_romid_mastertable_address}" },
+        { "mnemonic": "ldd",  "op_str": "0x0A" },
+        { "mnemonic": "staa", "op_str": "VAR{current_romid_a}" },
+        { "mnemonic": "stab", "op_str": "VAR{current_romid_b}" },
+        { "mnemonic": "ldd",  "op_str": "0x0C" },
+        { "mnemonic": "staa", "op_str": "VAR{current_romid_model_index}" },
+        { "mnemonic": "stab", "op_str": "VAR{current_romid_flagcmd}" },
+        { "mnemonic": "ldx",  "op_str": "0x06" }
+      ]
+    },
+    {
+      "name": "attach_cu_specific_addresses",
+      "depends_on": ["set_current_romid_values"],
+      "pattern": [
+        { "mnemonic": "ldab", "op_str": "0xFF" },
+        { "mnemonic": "stab", "op_str": "VAR{maximum_menuitem_index_2}" },
+        { "mnemonic": "stab", "op_str": "VAR{last_visible_menuitem_index}" },
+        { "mnemonic": "ldaa", "op_str": "REF{current_selected_device}" },
+        { "mnemonic": "cmpa" },
+        { "max_skip": 4, "min_skip": [3]},
+        { "mnemonic": "ldaa" },
+        { "mnemonic": "staa", "op_str": "VAR{max_length_menuitems_1}" },
+        { "mnemonic": "staa", "op_str": "VAR{max_length_menuitems_2}" },
+        { "mnemonic": "ldaa" },
+        { "mnemonic": "staa", "op_str": "VAR{max_length_hidden_menuitems}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "stx", "op_str": "VAR{temporary_menuitems_pointer}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "stx", "op_str": "VAR{possible_hidden_menuitems_pointer}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "stx", "op_str": "VAR{menuitems_upper_label_pointer}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "stx", "op_str": "VAR{adjustments_label_pointer}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "stx", "op_str": "VAR{current_scale_table_pointer}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "stx", "op_str": "VAR{menuitems_lower_label_pointer}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "stx", "op_str": "VAR{romid_upper_label_pointer}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "stx", "op_str": "VAR{romid_lower_label_pointer}" }
+      ],
+      "description": "Skip is unclear yet for other cassettes"
     }
   ],
   "strings": {

@@ -4,6 +4,7 @@
 import logging
 from pathlib import Path
 from typing import List, Optional, Tuple
+from analyzer_core.analyze.ssm_function_emulator import SsmFunctionEmulator
 from analyzer_core.analyze.string_finder import RomStringFinder
 from analyzer_core.data.rom_image import RomImage
 from analyzer_core.config.rom_config import RomConfig
@@ -59,7 +60,10 @@ class RomService:
         self.pattern_detector = PatternDetector(pattern_repo, self.config)
         self.pattern_detector.detect_patterns(self.instr_list)
 
-        # TODO Patterndetector hier einbauen, der soll über die Instructions gehene
+        # Emulate functions to extract information
+        ssm_fn_emu = SsmFunctionEmulator(rom_image, self.config)
+        ssm_fn_emu.run_ssm_functions()
+
 
         # TODO: für die Pipeline einbauen, vorher wohl einzeln
         # - Pattern-Detector, mit Ref auf self.config und rom und alles?
