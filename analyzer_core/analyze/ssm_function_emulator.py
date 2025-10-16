@@ -104,5 +104,44 @@ class SsmFunctionEmulator:
                 length = emulator.read8(romid_table_max_index) + 1,
                 entries=[]
             )
+    
+    def __collect_romid_tables(self):
+        '''
+        Collects all RomID table information based on the RomIDs that were directly taken out of the ROM
+        '''
+        for current_device in self.rom_cfg.selectable_devices:
+            current_table_info = self.rom_cfg.romid_tables[current_device]
+
+            romid_tbl = RomIdTable(self.rom, current_table_info)
+
+            # Get Master tables for current RomID
+            # TODO Analyse von div. Funktionen erst noch erforderlich für RomID3 usw...!
+            for current_romid in current_table_info.entries:
+                # Let seperate emulation run for each current RomID
+                emulator = PrimitiveHD6303Emulator(self.rom, dasm, self.rom_cfg, start_address=0xFFFF)
+
+                current_selected_device = self.rom_config.address_by_name("current_selected_device")
+                emulator.write8(current_selected_device, current_device.value)
+
+                # Run function to collect all possible protocols and SSM command bytes
+                current_romid.ssm_cmd_protocols = self.__execute_get_cmd_com_types(emulator, current_romid)
+
+                # Let the process of preparing RomID command run, so that we get the SSM command and check for hard coded RomIDs.
+                current_romid.request_romid_cmd = self.__execute_request_romid_save_romid(emulator, current_romid)
+
+                # Save current RomID table pointer to memory, so that it can be used by other functions
+                self.__execute_save_romid_table_to_memory(emulator, romid_tbl, current_romid)
+
+                self.__execute_attach_cu_specific_addresses(emulator, current_device, current_romid)
+
+
+                current_romid.master_table = MasterTable(
+                    self.rom, 
+                    MasterTableInfo(
+                        self.rom_config.get_offset_value(current_device, current_romid.master_table_address_rel),
+                        current_romid.entry_size, 
+                        []
+                        )
+                    )
 
 

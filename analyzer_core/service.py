@@ -84,7 +84,8 @@ class RomService:
     #     catalog = RomCatalog(roms)
     #     return catalog
 
-    def list_roms(self, root_folder: Path) -> list[Path]:
+    @classmethod
+    def list_roms(cls, root_folder: Path) -> list[Path]:
         """List all ROM files in the given folder."""
         return list(root_folder.glob("*.bin"))
 

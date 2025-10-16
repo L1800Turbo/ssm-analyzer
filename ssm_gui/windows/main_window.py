@@ -40,8 +40,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SSM ROM Analyzer")
         self.resize(1200, 800)
 
-        # Initialize RomService once for the whole app
-        self.rom_service = RomService()
+        # Initialize RomService once for the whole app 
+        # TODO Für mehrere Dateien irgendwann
+        #self.rom_service = RomService()
+        self.rom_services: dict[Path, RomService] = {}
 
         # Menu bar
         menu_bar = QMenuBar(self)
@@ -59,12 +61,15 @@ class MainWindow(QMainWindow):
         # Tabs
         self.tabs = QTabWidget()
         self.main_vertical_layout.addWidget(self.tabs)
-        self.asm_viewer = AsmViewerWidget(self.rom_service)
-        self.tabs.addTab(self.asm_viewer, "Assembly")
-        self.rom_catalog = RomCatalogWidget()
+        self.asm_viewer = AsmViewerWidget(self.rom_services)
+        self.tabs.addTab(self.asm_viewer, "Analysis")
+        self.rom_catalog = RomCatalogWidget(self.rom_services)
         self.tabs.addTab(self.rom_catalog, "ROM Import/Info")
-        self.ssm_tables = SsmTablesWidget()
-        self.tabs.addTab(self.ssm_tables, "General Config")
+        self.ssm_tables = SsmTablesWidget(self.rom_services)
+        self.tabs.addTab(self.ssm_tables, "SSM tables")
+
+        # Refresh info about analyzed roms
+        self.asm_viewer.roms_updated.connect(self.rom_catalog._refresh_rom_info_tree)
 
         # Log area
         self.log_area = QTextEdit()
@@ -107,5 +112,5 @@ class MainWindow(QMainWindow):
         self.status_bar.showMessage(f"Selected ROM folder: {folder}")
 
         # Load ROM list from selected folder and update ASM viewer
-        rom_paths = self.rom_service.list_roms(Path(self.current_rom_folder))
+        rom_paths = RomService.list_roms(Path(self.current_rom_folder))
         self.asm_viewer.set_rom_list(rom_paths)

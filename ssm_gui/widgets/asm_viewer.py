@@ -25,7 +25,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Dict, Set, Tuple
 
-from PyQt6.QtCore import Qt, QModelIndex, QPoint
+from PyQt6.QtCore import Qt, QModelIndex, QPoint, pyqtSignal
 from PyQt6.QtGui import QFontDatabase, QKeySequence, QBrush
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QListWidget, QLabel,
@@ -79,11 +79,14 @@ class AsmViewerWidget(QWidget):
         - Search, go to address
         - Breakpoints, PC control (GoTo-PC/Step/PC=Selection, follow PC)
     """
+    roms_updated = pyqtSignal()
 
-    def __init__(self, rom_service: RomService) -> None:
+    def __init__(self, rom_services: dict[Path, RomService]) -> None:
         super().__init__()
 
-        self.rom_service = rom_service
+
+        self.rom_services = rom_services
+        self.curr_rom_service = None
 
         self.logger = logging.getLogger(__name__)
 
@@ -334,14 +337,25 @@ class AsmViewerWidget(QWidget):
         if index < 0 or index >= len(self.rom_paths):
             return
         rom_path: Path = self.rom_paths[index]
-        self.current_rom_path = rom_path
+        #self.current_rom_path = rom_path
+
+        # New ROMs to be added to the services dict
+        if rom_path not in self.rom_services:
+            self.rom_services[rom_path] = RomService()
+
+        
+        self.curr_rom_service = self.rom_services[rom_path]
+
 
         # Load ROM + and let the analyzer do its job
+        # TODO Oben in die IF einbauen, dann wird das einmalig neu gemacht, verhindert auch warnungen
         try:
-            self.rom_image: RomImage = self.rom_service.load_rom_image(rom_path)
+            self.rom_image: RomImage = self.curr_rom_service.load_rom_image(rom_path)
 
-            self.rom_service.analyze(self.rom_image)
-            instructions = self.rom_service.instr_list
+            self.curr_rom_service.analyze(self.rom_image)
+            self.roms_updated.emit()
+
+            instructions = self.curr_rom_service.instr_list
 
             # TODO: Instructions dann letztlich aus dem Objekt oholen
             #instructions: List[Instruction] = self.rom_service.disassemble_from_reset(self.rom_image)
@@ -380,7 +394,7 @@ class AsmViewerWidget(QWidget):
         self._refresh_function_table()
 
         # Load breakpoints (optional; per-ROM file)
-        self._load_breakpoints()
+        #self._load_breakpoints()
 
         # Reset selection (if available)
         reset_addr = self._try_get_reset_vector(self.rom_image)
@@ -407,6 +421,9 @@ class AsmViewerWidget(QWidget):
         """
         from analyzer_core.disasm.cfg import extract_functions_and_callers, FunctionInfo
 
+        if not self.curr_rom_service:
+            raise LookupError("Can't build display items, current ROM service isn't selected, yet")
+
         # Code start addresses + map
         code_starts: Set[int] = {ins.address for ins in instructions}
         code_map: Dict[int, Instruction] = {ins.address: ins for ins in instructions}
@@ -418,7 +435,8 @@ class AsmViewerWidget(QWidget):
 
         # Function starts/callers from core
         reset_addr = self._try_get_reset_vector(rom_image)
-        functions: Dict[int, FunctionInfo] = extract_functions_and_callers(instructions, reset_addr, self.rom_service.config)
+        functions: Dict[int, FunctionInfo] = extract_functions_and_callers(
+            instructions, reset_addr, self.curr_rom_service.config)
 
         # Create display elements
         display_items: List[DisplayItem] = []
@@ -482,6 +500,10 @@ class AsmViewerWidget(QWidget):
     # ---- Rendering ----
     def _render_code_line(self, ins: Instruction, functions: Dict[int, FunctionInfo]) -> str:
         """Format: •/▶, address, hex, mnemonic, op_str, optional target (→ label/$addr)."""
+
+        if not self.curr_rom_service:
+            raise LookupError("Can't build display items, current ROM service isn't selected, yet")
+        
         bytes_str = " ".join(f"{b:02X}" for b in ins.bytes)
         mnem = ins.mnemonic
         op = getattr(ins, "op_str", "")
@@ -489,12 +511,12 @@ class AsmViewerWidget(QWidget):
 
         # For 16-bit operands it's possible that we have a direct mapping of the variable
         if ins.is_operand_16bit and ins.target_value is not None:
-            ref_var = self.rom_service.config.get_by_address(ins.target_value)
+            ref_var = self.curr_rom_service.config.get_by_address(ins.target_value)
             if ref_var is not None and ref_var.address is not None:
                 if ref_var.type == RomVarType.STRING and ref_var.size is not None:
                     target = f" \"{self.rom_image.rom[ref_var.address:ref_var.address + ref_var.size].decode('utf-8', errors='ignore')}\""
                 elif ref_var.type == RomVarType.VARIABLE or ref_var.type == RomVarType.PORT:
-                    current_var = self.rom_service.config.get_by_address(ref_var.address)
+                    current_var = self.curr_rom_service.config.get_by_address(ref_var.address)
                     if current_var is not None:
                         target = f" ({current_var.name})"
 
@@ -539,6 +561,9 @@ class AsmViewerWidget(QWidget):
                     item.setText(self._render_code_line(di.instr, self.functions))
 
     def _refresh_function_table(self) -> None:
+        if not self.curr_rom_service:
+            raise LookupError("Can't build display items, current ROM service isn't selected, yet")
+        
         # Funktionsnamen ggf. aktualisieren (hier: bereits gesetzt)
         self.fn_model = FunctionTableModel(self.functions, self)
         self.fn_table.setModel(self.fn_model)
@@ -546,13 +571,13 @@ class AsmViewerWidget(QWidget):
         self.fn_table.setColumnWidth(1, 80)   # Address
 
         # Refresh call tree
-        self.fn_tree_model = FunctionCallTreeModel(self.rom_service.call_tree, self.functions)
+        self.fn_tree_model = FunctionCallTreeModel(self.curr_rom_service.call_tree, self.functions)
         self.fn_tree_view.setModel(self.fn_tree_model)
         self.fn_tree_view.setColumnWidth(0, 160)
         self.fn_tree_view.setColumnWidth(1, 80)   # Address
 
         # Refresh variables
-        self.var_view_model = VariableTableModel(self.rom_service.config.all_vars(), self)
+        self.var_view_model = VariableTableModel(self.curr_rom_service.config.all_vars(), self)
         self.var_view.setModel(self.var_view_model)
         self.var_view.setColumnWidth(0, 160)
         self.var_view.setColumnWidth(1, 80)   # Address
@@ -666,12 +691,19 @@ class AsmViewerWidget(QWidget):
         else:
             self.breakpoints.add(addr)
         self._refresh_code_row(addr)
-        self._save_breakpoints()
+        #self._save_breakpoints()
 
     def action_init_emulator(self) -> None:
-        self.rom_service.init_emulator(self.rom_image)
+        if not self.curr_rom_service:
+            raise LookupError("Can't build display items, current ROM service isn't selected, yet")
+        
+        self.curr_rom_service.init_emulator(self.rom_image)
 
     def action_step(self) -> None:
+        if not self.curr_rom_service:
+            raise LookupError("Can't build display items, current ROM service isn't selected, yet")
+        # TODO diese not irgendwie vielleicht als @ oben drüber?
+        
         if not self.instructions:
             return
         if self.current_pc is None:
@@ -679,7 +711,7 @@ class AsmViewerWidget(QWidget):
             return
         
         try:
-            mem_access = self.rom_service.step_from_address(self.current_pc)
+            mem_access = self.curr_rom_service.step_from_address(self.current_pc)
         except Exception as e:
             self.logger.error(f"Error running instruction at PC=0x{self.current_pc:04X}: {e}")
             return
@@ -690,12 +722,15 @@ class AsmViewerWidget(QWidget):
             self.logger.error("No next instruction address found.")
 
     def action_fn_end(self) -> None:
+        if not self.curr_rom_service:
+            raise LookupError("Can't build display items, current ROM service isn't selected, yet")
+        
         if self.current_pc is None:
             self.logger.error("No PC set, cannot run to function end.")
             return
 
         try:
-            mem_access = self.rom_service.run_to_function_end(self.current_pc)
+            mem_access = self.curr_rom_service.run_to_function_end(self.current_pc)
             if mem_access and mem_access.next_instr_addr:
                 self.set_pc(mem_access.next_instr_addr)
         except Exception as e:
@@ -818,35 +853,35 @@ class AsmViewerWidget(QWidget):
         self.logger.warning(f"Address ${addr:04X} was not found in the current view.")
 
     # ---- Persist breakpoints (optional) ----
-    def _bp_file_path(self) -> Optional[Path]:
-        if not self.current_rom_path:
-            return None
-        p = Path(self.current_rom_path)
-        return p.with_suffix(p.suffix + ".bp.json")
+    # def _bp_file_path(self) -> Optional[Path]:
+    #     if not self.current_rom_path:
+    #         return None
+    #     p = Path(self.current_rom_path)
+    #     return p.with_suffix(p.suffix + ".bp.json")
 
-    def _load_breakpoints(self) -> None:
-        import json
-        p = self._bp_file_path()
-        if not p or not p.exists():
-            self.breakpoints.clear()
-            self._refresh_all_code_rows()
-            return
-        try:
-            data = json.loads(p.read_text(encoding="utf-8"))
-            addrs = data.get("breakpoints", [])
-            self.breakpoints = {int(a, 16) if isinstance(a, str) else int(a) for a in addrs}
-            self._refresh_all_code_rows()
-        except Exception:
-            # still proceed without breakpoints
-            pass
+    # def _load_breakpoints(self) -> None:
+    #     import json
+    #     p = self._bp_file_path()
+    #     if not p or not p.exists():
+    #         self.breakpoints.clear()
+    #         self._refresh_all_code_rows()
+    #         return
+    #     try:
+    #         data = json.loads(p.read_text(encoding="utf-8"))
+    #         addrs = data.get("breakpoints", [])
+    #         self.breakpoints = {int(a, 16) if isinstance(a, str) else int(a) for a in addrs}
+    #         self._refresh_all_code_rows()
+    #     except Exception:
+    #         # still proceed without breakpoints
+    #         pass
 
-    def _save_breakpoints(self) -> None:
-        import json
-        p = self._bp_file_path()
-        if not p:
-            return
-        try:
-            data = {"breakpoints": [f"{a:04X}" for a in sorted(self.breakpoints)]}
-            p.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        except Exception:
-            pass
+    # def _save_breakpoints(self) -> None:
+    #     import json
+    #     p = self._bp_file_path()
+    #     if not p:
+    #         return
+    #     try:
+    #         data = {"breakpoints": [f"{a:04X}" for a in sorted(self.breakpoints)]}
+    #         p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    #     except Exception:
+    #         pass
