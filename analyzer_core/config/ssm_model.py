@@ -19,7 +19,7 @@ class CurrentSelectedDevice(IntEnum):
 @dataclass
 class RomIdTableInfo:
     #device: "CurrentSelectedDevice"
-    pointer_addr: int
+    relative_pointer_addr: int
     length: int
 
     #entries: list["RomIdTableEntry_512kb"] # TODO und die andere?
@@ -57,6 +57,19 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
 
     ssm_cmd_protocols: Optional[list[tuple[int,int]]] = None
     request_romid_cmd: Optional[tuple[int,int,int,int]] = None
+
+    # Values defined in fn_attach_cu_specific_addresses
+    # These values depend in most cases only on the ECU type, but rarely also on the RomID
+    max_length_menuitems:Optional[int] = None
+    max_length_hidden_menuitems:Optional[int] = None
+    temporary_menuitems_pointer:Optional[int] = None
+    possible_hidden_menuitems_pointer:Optional[int] = None
+    menuitems_upper_label_pointer:Optional[int] = None
+    menuitems_lower_label_pointer:Optional[int] = None
+    adjustments_label_pointer:Optional[int] = None
+    current_scale_table_pointer:Optional[int] = None
+    romid_upper_label_pointer:Optional[int] = None
+    romid_lower_label_pointer:Optional[int] = None 
 
     master_table: Optional["MasterTableInfo"] = None
 

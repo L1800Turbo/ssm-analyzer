@@ -24,11 +24,21 @@ class MemoryRegion:
         return self.start <= address <= self.end
 
 class MemoryMap:
-    def __init__(self, regions: List[MemoryRegion]):
-        self.regions = regions
+    def __init__(self, regions: Optional[List[MemoryRegion]] = None):
+        self.regions = regions if regions else self.get_default_ssm_values()
         self._by_kind: Dict[RegionKind, List[MemoryRegion]] = {}
-        for region in regions:
+        for region in self.regions:
             self._by_kind.setdefault(region.kind, []).append(region)
+    
+    # TODO in config?
+    def get_default_ssm_values(self):
+        return [
+                MemoryRegion(start=0x0000, end=0x1FFF, kind=RegionKind.RAM, name="RAM"),               # 8 KB RAM
+                MemoryRegion(start=0x2000, end=0x3FFF, kind=RegionKind.MAPPED_ROM, name="MAPPED_ROM"), # 8 KB Mapped ROM from 0x2000, needs to be attached first
+                MemoryRegion(start=0x8000, end=0xFFFF, kind=RegionKind.ROM, name="ROM"),               # 32 KB ROM from 0x8000
+                
+                # Optional: IO, TODO
+            ]
 
     @classmethod
     def from_profile_yaml(cls, yaml_path: Path, profile_name: str = "default") -> "MemoryMap":

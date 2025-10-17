@@ -55,15 +55,9 @@ class Emulator6303:
 
         self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom)
 
-        self.memory_map = memory_map if memory_map else MemoryMap([
-                MemoryRegion(start=0x0000, end=0x1FFF, kind=RegionKind.RAM, name="RAM"),               # 8 KB RAM TODO weniger
-                MemoryRegion(start=0x2000, end=0x3FFF, kind=RegionKind.MAPPED_ROM, name="MAPPED_ROM"), # 8 KB Mapped ROM from 0x2000, needs to be attached first
-                MemoryRegion(start=0x8000, end=0xFFFF, kind=RegionKind.ROM, name="ROM"),               # 32 KB ROM from 0x8000
-                
-                # Optional: IO, TODO
-            ])
-        self.mem = MemoryManager(self.memory_map, rom_image)
+        self.memory_map = memory_map if memory_map else MemoryMap()
         self.hooks = hooks or HookManager()
+        self.mem = MemoryManager(self.memory_map, rom_image, hooks=self.hooks)
         self.tracer = tracer or ExecutionTracer() # TODO Tracer einbauen
         self.rom_config = rom_config or RomConfig()
 
@@ -157,8 +151,8 @@ class Emulator6303:
         self.SP = (self.SP - 1) & 0xFFFF
 
     def push16(self, w: int) -> None:
-        self.push8(w & 0xFF)
         self.push8((w >> 8) & 0xFF)
+        self.push8(w & 0xFF)
 
     def pull8(self) -> int:
         self.SP = (self.SP + 1) & 0xFFFF
@@ -206,40 +200,40 @@ class Emulator6303:
     
     def _shift_left(self, value):
         old = value
-        self.C = (old >> 7) & 0x01
+        self.flags.C = (old >> 7) & 0x01
         result = (old << 1) & 0xFF
         self._set_ZN_8(result)
-        self.V = 1 if ((old ^ result) & 0x80) != 0 else 0
+        self.flags.V = 1 if ((old ^ result) & 0x80) != 0 else 0
         return result
 
     def _shift_right(self, value, arithmetic=False):
         old = value
-        self.C = old & 0x01
+        self.flags.C = old & 0x01
         
         if arithmetic:
             result = ((old >> 1) | (old & 0x80)) & 0xFF
         else:
             result = (old >> 1) & 0xFF
         self._set_ZN_8(result)
-        self.V = 0
+        self.flags.V = 0
         return result
 
     def _rotate_left(self, value):
         old = value
-        carry_in = self.C
-        self.C = (old >> 7) & 0x01
+        carry_in = self.flags.C
+        self.flags.C = (old >> 7) & 0x01
         result = ((old << 1) | carry_in) & 0xFF
         self._set_ZN_8(result)
-        self.V = 1 if ((old ^ result) & 0x80) != 0 else 0
+        self.flags.V = 1 if ((old ^ result) & 0x80) != 0 else 0
         return result
 
     def _rotate_right(self, value):
         old = value
-        carry_in = self.C << 7
-        self.C = old & 0x01
+        carry_in = self.flags.C << 7
+        self.flags.C = old & 0x01
         result = ((old >> 1) | carry_in) & 0xFF
         self._set_ZN_8(result)
-        self.V = 1 if ((old ^ result) & 0x80) != 0 else 0
+        self.flags.V = 1 if ((old ^ result) & 0x80) != 0 else 0
         return result
     
     def _transfer(self, src, dst):
@@ -258,10 +252,11 @@ class Emulator6303:
     #     self._mocked.clear()
 
     def step(self) -> Optional[MemAccess]:
-        # Mock‑Einstieg?
-        # if self.PC in self._mocked:
-        #     self._mocked[self.PC](self)
-        #     return
+        # Check if this function is checked to be mocked
+        mock_fn = self.hooks.get_mock(self.PC)
+        if mock_fn:
+            mock_fn(self)
+            return
     
         instr = self._fetch_instruction()
         if not instr:
@@ -273,7 +268,7 @@ class Emulator6303:
             asm_step: MemAccess = func(instr)
 
             # TODO hier die steps auswerten?
-            print(asm_step)
+            #print(asm_step)
 
             return asm_step
         
@@ -321,7 +316,7 @@ class Emulator6303:
         
         self.A = ma.value & 0xFF
         self._set_ZN_8(self.A)
-        self.C = self.V = 0
+        self.flags.C = self.flags.V = 0
 
         self.PC += instr.size
         ma.next_instr_addr = self.PC
@@ -336,7 +331,7 @@ class Emulator6303:
 
         self.B = ma.value & 0xFF
         self._set_ZN_8(self.B)
-        self.C = self.V = 0
+        self.flags.C = self.flags.V = 0
 
         self.PC += instr.size
         ma.next_instr_addr = self.PC
@@ -409,7 +404,7 @@ class Emulator6303:
         self.A = (ma.value >> 8) & 0xFF
         self.B = ma.value & 0xFF
         self._set_ZN_8(ma.value)
-        self.V = 0
+        self.flags.V = 0
 
         self.PC += instr.size
         ma.next_instr_addr = self.PC
@@ -424,7 +419,7 @@ class Emulator6303:
         
         self.X = ma.value & 0xFFFF
         self._set_ZN_8(ma.value)
-        self.V = 0
+        self.flags.V = 0
 
         self.PC += instr.size
         ma.next_instr_addr=self.PC
@@ -890,8 +885,8 @@ class Emulator6303:
         d = ((self.A << 8) | self.B) & 0xFFFF
         result = (d + ma.value) & 0xFFFF
         self._set_ZN_8(result)
-        self.C = 1 if d + ma.value > 0xFFFF else 0
-        self.V = 1 if ((~(d ^ ma.value)) & (d ^ result) & 0x8000) != 0 else 0
+        self.flags.C = 1 if d + ma.value > 0xFFFF else 0
+        self.flags.V = 1 if ((~(d ^ ma.value)) & (d ^ result) & 0x8000) != 0 else 0
         self.A = (result >> 8) & 0xFF
         self.B = result & 0xFF
 
@@ -909,8 +904,8 @@ class Emulator6303:
         d = ((self.A << 8) | self.B) & 0xFFFF
         result = (d - ma.value) & 0xFFFF
         self._set_ZN_8(result)
-        self.C = 1 if d < ma.value else 0
-        self.V = 1 if ((d ^ ma.value) & (d ^ result) & 0x8000) != 0 else 0
+        self.flags.C = 1 if d < ma.value else 0
+        self.flags.V = 1 if ((d ^ ma.value) & (d ^ result) & 0x8000) != 0 else 0
         self.A = (result >> 8) & 0xFF
         self.B = result & 0xFF
 
@@ -926,11 +921,11 @@ class Emulator6303:
         if ma.value is None:
             raise ValueError("Invalid memory access")
         
-        carry_in = self.C
+        carry_in = self.flags.C
         result = self.A + ma.value + carry_in
         self._set_ZN_8(result)
-        self.C = 1 if result > 0xFF else 0
-        self.V = 1 if ((self.A ^ result) & (ma.value ^ result) & 0x80) != 0 else 0
+        self.flags.C = 1 if result > 0xFF else 0
+        self.flags.V = 1 if ((self.A ^ result) & (ma.value ^ result) & 0x80) != 0 else 0
         self.A = result & 0xFF
 
         ma.value = result
@@ -945,11 +940,11 @@ class Emulator6303:
         ma = self.__read_value8(instr)
         if ma.value is None:
             raise ValueError("Invalid memory access")
-        carry_in = self.C
+        carry_in = self.flags.C
         result = self.B + ma.value + carry_in
         self._set_ZN_8(result)
-        self.C = 1 if result > 0xFF else 0
-        self.V = 1 if ((self.B ^ result) & (ma.value ^ result) & 0x80) != 0 else 0
+        self.flags.C = 1 if result > 0xFF else 0
+        self.flags.V = 1 if ((self.B ^ result) & (ma.value ^ result) & 0x80) != 0 else 0
         self.B = result & 0xFF
 
         ma.value = result
@@ -1082,7 +1077,29 @@ class Emulator6303:
 
         # Flags
         self._set_ZN_8(self.X)
-        self.V = 1 if old == 0x7FFF and self.X == 0x8000 else 0
+        self.flags.V = 1 if old == 0x7FFF and self.X == 0x8000 else 0
+        # C bleibt unverändert
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            addr=None,
+            var=self.rom_config.get_by_address(self.X),
+            value=self.X,
+            rw='W',
+            by=self.PC,
+            instr_addr=old_PC,
+            next_instr_addr=self.PC
+        )
+    
+    def dex(self, instr: Instruction) -> MemAccess:
+        old = self.X
+        self.X = (self.X - 1) & 0xFFFF
+
+        # Flags
+        self._set_ZN_8(self.X)
+        self.flags.V = 1 if old == 0x7FFF and self.X == 0x8000 else 0
         # C bleibt unverändert
 
         old_PC = self.PC
@@ -1158,7 +1175,7 @@ class Emulator6303:
     def bcc(self, instr: Instruction) -> MemAccess:
         old_PC = self.PC
 
-        if self.C == 0:
+        if self.flags.C == 0:
             self.PC = instr.target_value # type: ignore
         else:
             self.PC += instr.size
@@ -1178,7 +1195,7 @@ class Emulator6303:
     def bcs(self, instr: Instruction) -> MemAccess:
         old_PC = self.PC
 
-        if self.C == 1:
+        if self.flags.C == 1:
             self.PC = instr.target_value # type: ignore
         else:
             self.PC += instr.size
@@ -1375,7 +1392,7 @@ class Emulator6303:
 
     def cli(self, instr: Instruction) -> MemAccess:
         """Clear Interrupt Mask (I = 0)"""
-        self.I = 0
+        self.flags.I = 0
         old_PC = self.PC
         self.PC += instr.size
 
@@ -1415,7 +1432,7 @@ class Emulator6303:
 
         # Flags setzen
         self._set_ZN_8(ma.value)
-        self.V = 0  # Always clear overflow flag
+        self.flags.V = 0  # Always clear overflow flag
         # No changes to carry
 
         old_PC = self.PC
@@ -1436,7 +1453,7 @@ class Emulator6303:
     #     """Decimal Adjust Accumulator (BCD) – einfache Version"""
     #     if (self.A & 0x0F) > 9:
     #         self.A += 0x06
-    #     if (self.A & 0xF0) > 0x90 or self.C:
+    #     if (self.A & 0xF0) > 0x90 or self.flags.C:
     #         self.A += 0x60
     #     self.A &= 0xFF
     #     self.__set_z(self.A)
@@ -1500,8 +1517,8 @@ class Emulator6303:
         
         result = (self.X - ma.value) & 0xFFFF
         self._set_ZN_8(result)
-        self.V = 1 if ((self.X ^ ma.value) & (self.X ^ result) & 0x8000) != 0 else 0
-        self.C = 1 if self.X < ma.value else 0
+        self.flags.V = 1 if ((self.X ^ ma.value) & (self.X ^ result) & 0x8000) != 0 else 0
+        self.flags.C = 1 if self.X < ma.value else 0
 
         old_PC = self.PC
         self.PC += instr.size  
@@ -1546,14 +1563,14 @@ class Emulator6303:
 
     def sec(self, instr: Instruction) -> MemAccess:
         """Set Carry Flag (C = 1)"""
-        self.C = 1
+        self.flags.C = 1
         old_PC = self.PC
         self.PC += instr.size
 
         return MemAccess(
             addr=None,
             var=None,
-            value=self.C,
+            value=self.flags.C,
             rw='W',
             by=self.PC,
             instr_addr=old_PC,
@@ -1562,14 +1579,14 @@ class Emulator6303:
 
     def clc(self, instr: Instruction) -> MemAccess:
         """Clear Carry Flag (C = 0)"""
-        self.C = 0
+        self.flags.C = 0
         old_PC = self.PC
         self.PC += instr.size
 
         return MemAccess(
             addr=None,
             var=None,
-            value=self.C,
+            value=self.flags.C,
             rw='W',
             by=self.PC,
             instr_addr=old_PC,
@@ -1594,14 +1611,18 @@ class Emulator6303:
 
     @operand_needed
     def jsr(self, instr: Instruction) -> MemAccess:
-        ret = (self.PC + instr.size) & 0xFFFF
+        ret = (self.PC + instr.size)
+        if ret > 0xFFFF:
+            raise ValueError("Jumping to instruction behind ROM!")
 
         self.push16(ret)
 
-
         #self._call_stack.append((self.PC, addr))
         old_PC = self.PC
-        self.PC:int = instr.target_value # type: ignore
+
+        if not instr.target_value:
+            raise ValueError("Couldn't determine jumping address for jsr.")
+        self.PC:int = instr.target_value
         return MemAccess(
             addr=self.PC,
             var=self.rom_config.get_by_address(self.PC),
@@ -1639,7 +1660,7 @@ class Emulator6303:
 
     def sei(self, instr: Instruction) -> MemAccess:
         self.logger.warning("Command sei has currently no effect!")
-        self.I = 1
+        self.flags.I = 1
 
         old_PC = self.PC
         self.PC += instr.size
@@ -1647,7 +1668,7 @@ class Emulator6303:
         return MemAccess(
             addr=None,
             var=None,
-            value=self.I,
+            value=self.flags.I,
             rw='W',
             by=self.PC,
             instr_addr=old_PC,

@@ -70,7 +70,7 @@ class RomCatalogWidget(QWidget):
                 current_rom.appendRow([current_ecu])
 
                 romid_table = service.config.romid_tables[ecu]
-                current_ecu.appendRow([QStandardItem("pointer_addr"), QStandardItem(f"0x{romid_table.pointer_addr:02X}")])
+                current_ecu.appendRow([QStandardItem("pointer_addr"), QStandardItem(f"0x{romid_table.relative_pointer_addr:02X}")])
                 current_ecu.appendRow([QStandardItem("length"), QStandardItem(f"0x{romid_table.length:02X}")])
 
                 for romid in romid_table.entries:

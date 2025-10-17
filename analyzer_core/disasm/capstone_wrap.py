@@ -18,7 +18,7 @@ class Disassembler630x:
 
         self.rom = rom
 
-    def disassemble(self, code: bytes, address_offset: int, count:int = 0):
+    def __disassemble(self, code: bytes, address_offset: int, count:int = 0):
         """Disassembles code from address_offset. Returns an iterator of CsInsn."""
         return self.cs.disasm(code, address_offset, count)
 
@@ -61,7 +61,7 @@ class Disassembler630x:
         if not self.in_rom(addr):
             return None
 
-        capstone_instr = list(self.disassemble(self.rom[addr:addr+8], addr, 1))
+        capstone_instr = list(self.__disassemble(self.rom[addr:addr+8], addr, 1))
         if not capstone_instr:
             return None
         

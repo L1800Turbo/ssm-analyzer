@@ -42,6 +42,8 @@ class MainWindow(QMainWindow):
 
         # Initialize RomService once for the whole app 
         # TODO Für mehrere Dateien irgendwann
+        # TODO Aber mit eigenem manager drüber, der dann auch die einzelnen ROM-INformationen nebeneinander legt und vergleicht.
+        #
         #self.rom_service = RomService()
         self.rom_services: dict[Path, RomService] = {}
 
@@ -70,6 +72,7 @@ class MainWindow(QMainWindow):
 
         # Refresh info about analyzed roms
         self.asm_viewer.roms_updated.connect(self.rom_catalog._refresh_rom_info_tree)
+        self.asm_viewer.roms_updated.connect(self.ssm_tables.refresh_romid_table)
 
         # Log area
         self.log_area = QTextEdit()

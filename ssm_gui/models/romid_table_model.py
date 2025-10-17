@@ -8,7 +8,7 @@ from analyzer_core.config.ssm_model import RomIdTableEntry_512kb, RomIdTableInfo
 class RomIdTableModel(QAbstractTableModel):
     """Qt TableModel to visualize RomIdTableInfo.entries"""
 
-    HEADERS = ["RomID0", "RomID1", "RomID2", "Lbl", "MenuIdx", "STGA", "MTA", "A", "B", "C", "FlgB"]
+    HEADERS = ["RomID", "Label"]
 
     def __init__(self, romid_table: RomIdTableInfo | None = None, parent=None):
         super().__init__(parent)
@@ -30,29 +30,18 @@ class RomIdTableModel(QAbstractTableModel):
         entry = self.romid_table.entries[index.row()]
         col = index.column()
 
-        # Map column index to fields
-        if isinstance(entry, RomIdTableEntry_512kb):
-            mapping = {
-                0: entry.romid0,
-                1: entry.romid1,
-                2: entry.romid2,
-                3: entry.label_index,
-                4: entry.menuitems_index,
-                5: entry.ecu_addresses_rel,
-                6: entry.master_table_address_rel,
-                7: entry.romid_a,
-                8: entry.tbd_b,
-                9: entry.romid_model_index,
-                10: entry.flagbytes,
-            }
-        else:
-            mapping = {
-                0: entry.romid0,
-                1: entry.romid1,
-                2: entry.romid2,
-                3: entry.label_index,
-                4: entry.menuitems_index,
-                5: entry.ecu_addresses_rel,
+        mapping = {
+                0: f"{entry.romid0:02X} {entry.romid1:02X} {entry.romid2:02X}",
+                1: "tbd.",
+                # 2: entry.romid2,
+                # 3: entry.label_index,
+                # 4: entry.menuitems_index,
+                # 5: entry.ecu_addresses_rel,
+                # 6: entry.master_table_address_rel,
+                # 7: entry.romid_a,
+                # 8: entry.tbd_b,
+                # 9: entry.romid_model_index,
+                # 10: entry.flagbytes,
             }
 
         value = mapping.get(col, "")
