@@ -7,6 +7,9 @@ from enum import IntEnum
 import struct
 from typing import Optional, Union
 
+class RomEmulationError(Exception):
+    pass
+
 class CurrentSelectedDevice(IntEnum):
     EGI = 0x01
     AT  = 0x02
@@ -41,6 +44,14 @@ class RomIdTableEntry:
 class RomIdTableEntry_256kb(RomIdTableEntry):
     entry_size=0 # TODO, wie breit?
 
+    struct_format = "<B" # Dummy, da noch nicht definiert
+    entry_size = struct.calcsize(struct_format)  # = 12 Bytes
+
+    @classmethod
+    def from_bytes(cls, table_bytes:bytes) -> "RomIdTableEntry_512kb":
+        unpacked = struct.unpack(cls.struct_format, table_bytes)
+        return RomIdTableEntry_512kb(*unpacked)
+
 @dataclass
 class RomIdTableEntry_512kb(RomIdTableEntry):
     '''
@@ -62,14 +73,16 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
     # These values depend in most cases only on the ECU type, but rarely also on the RomID
     max_length_menuitems:Optional[int] = None
     max_length_hidden_menuitems:Optional[int] = None
-    temporary_menuitems_pointer:Optional[int] = None
-    possible_hidden_menuitems_pointer:Optional[int] = None
+    temporary_menuitems_pointer:Optional[int] = None # Will be adjusted from RomID[5] into final_menuitems_pointer
+    temporary_hidden_menuitems_pointer:Optional[int] = None # This pointer should depend on RomID[5] in a following function
     menuitems_upper_label_pointer:Optional[int] = None
     menuitems_lower_label_pointer:Optional[int] = None
     adjustments_label_pointer:Optional[int] = None
     current_scale_table_pointer:Optional[int] = None
     romid_upper_label_pointer:Optional[int] = None
-    romid_lower_label_pointer:Optional[int] = None 
+    romid_lower_label_pointer:Optional[int] = None
+
+    final_menuitems_pointer:Optional[int] = None
 
     master_table: Optional["MasterTableInfo"] = None
 
@@ -81,7 +94,7 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
 
 @dataclass
 class MasterTableInfo:
-    pointer_addr: int
+    pointer_addr_rel: int # Offset depends on ECU
     length: int
 
     entries: list["MasterTableEntry"]
@@ -93,7 +106,7 @@ class MasterTableEntry:
     menu_item_1: int
     menu_item_2: int
     menu_item_3: int
-    action_address_rel: int  # Needs offset adaption on some ECUs
+    action_address_rel: int # Offset depends on ECU
     scaling_index: int
     address_index: int
     upper_label_index: int

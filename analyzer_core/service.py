@@ -3,6 +3,7 @@
 
 import logging
 from pathlib import Path
+import struct
 from typing import List, Optional, Tuple
 from analyzer_core.analyze.ssm_function_emulator import SsmFunctionEmulator
 from analyzer_core.analyze.string_finder import RomStringFinder
@@ -56,9 +57,28 @@ class RomService:
         string_finder = RomStringFinder(rom_image, pattern_repo, self.config)
         string_finder.find_string_references()
         
-        # Detect assembly patterns
+        # Detect assembly patterns from by Reset reachable functions
         self.pattern_detector = PatternDetector(pattern_repo, self.config)
-        self.pattern_detector.detect_patterns(self.instr_list)
+        self.pattern_detector.detect_patterns(self.instr_list, "static_rom_pattern")
+
+        # TODO Noch auslagern?
+        # Detect functions called by master table worker pointer list
+        worker_function_count = 8
+        master_table_workers = []
+        for i in range(worker_function_count):
+            offset = self.config.address_by_name("master_table_worker_functions_ptr") + i * 2 # 16bit
+            ptr_bytes = rom_image.rom[offset:offset+2]
+            master_table_workers.append(struct.unpack(">H", ptr_bytes)[0])
+
+        self.disassemble_from_pointer_list(
+            start_addresses=master_table_workers,
+            rom_image=rom_image,
+            instructions=self.instr_list,
+            call_tree=self.call_tree
+            )
+        
+        # Second part pattern detections for functions that weren't statically reachable
+        self.pattern_detector.detect_patterns(self.instr_list, "master_table_pointer_pattern")
 
         # Emulate functions to extract information
         ssm_fn_emu = SsmFunctionEmulator(rom_image, self.config)
@@ -99,6 +119,10 @@ class RomService:
         Disassembliert nur tatsächlich erreichbaren Code ab Reset-Vektor und JSR/JMP-Zielen (rekursiv).
         """
         disasm = Disassembler630x(rom_image.rom)
+
+        # Start fresh instruction and call tree lists
+        instructions: List[Instruction] = []
+        call_tree: dict = {}
         try:
             from analyzer_core.data.rom_image import SSM1RomImage
             if isinstance(rom_image, SSM1RomImage):
@@ -108,7 +132,23 @@ class RomService:
         except Exception:
             self.logger.warning("Failed to determine start address, defaulting to 0x0000")
             start_addr = 0x0000
-        return disasm.disassemble_reachable(rom_image.rom, start_addr)
+        disasm.disassemble_reachable(start_addr, instructions, call_tree)
+
+        return instructions, call_tree
+    
+    def disassemble_from_pointer_list(self, start_addresses: list[int], rom_image: RomImage, instructions: List[Instruction], call_tree: dict):
+        '''
+        Disassemble code by a given list of addresses which work as a pointer
+        '''
+        disasm = Disassembler630x(rom_image.rom)
+
+
+        for start_addr in start_addresses:
+            new_instructions, new_call_tree = disasm.disassemble_reachable(start_addr, instructions, call_tree)
+        
+        return instructions, call_tree
+
+
 
     def init_emulator(self, rom_image: RomImage) -> None:
         """Initialize the emulator."""

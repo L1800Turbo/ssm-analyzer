@@ -14,13 +14,16 @@ class PatternRepository:
 
     def _load(self):
         with open(self.json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        self.version = data.get("version", "")
-        self.fn_patterns = data.get("functions", [])
-        self.string_patterns = data.get("strings", {})
+            self.data = json.load(f)
+        self.version = self.data.get("version", "")
+        #self.fn_patterns = data.get("functions", [])
+        self.string_patterns = self.data.get("strings", {})
 
-    def get_fn_patterns(self) -> List[Dict[str, Any]]:
-        return self.fn_patterns
+    def get_patterns(self, pattern_group:str) -> List[Dict[str, Any]]:
+        return self.data.get(pattern_group)
+
+    #def get_fn_patterns(self) -> List[Dict[str, Any]]:
+    #    return self.fn_patterns
 
     def get_string_patterns(self) -> Dict[str, str]:
         return self.string_patterns

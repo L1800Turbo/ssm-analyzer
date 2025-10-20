@@ -22,13 +22,14 @@ class PatternDetector:
         self.logger = logging.getLogger(__name__)
 
         self.repo = repo
-        self.fn_patterns = repo.get_fn_patterns()
+        #self.fn_patterns = repo.get_fn_patterns()
         self.rom_cfg = rom_cfg
 
         self.found_signatures = set()
 
-    def detect_patterns(self, instructions: List[Instruction]):
-        signatures = self.fn_patterns
+    def detect_patterns(self, instructions: List[Instruction], pattern_group:str):
+        signatures = self.repo.get_patterns(pattern_group)
+        #self.fn_patterns
 
         # Get all patterns as missing to be detected one after another
         missing = [step["name"] for step in signatures]

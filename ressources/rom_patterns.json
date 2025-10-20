@@ -1,6 +1,6 @@
 {
   "version": "0.1",
-  "functions": [
+  "static_rom_pattern": [
     {
       "name": "wait_ms",
       "pattern": [
@@ -17,16 +17,16 @@
       "depends_on": ["wait_ms"],
       "pattern": [
         { "mnemonic": "ldx", "op_str": "REF{str_select_system}" },
-        { "mnemonic": "jsr", "op_str": "FN{print_upper_screen}" },
+        { "mnemonic": "jsr", "op_str": "FN{set_upper_screen_buffer}" },
         { "mnemonic": "jsr" },
         { "mnemonic": "ldaa", "op_str": "VAR{current_selected_device}" }
       ],
       "description": "SELECT SYSTEM Function"
     },
     {
-      "name": "print_upper_screen",
+      "name": "set_upper_screen_buffer",
       "depends_on": ["select_system"],
-      "start_address": "REF{print_upper_screen}",
+      "start_address": "REF{set_upper_screen_buffer}",
       "pattern": [
         { "mnemonic": "psha" },
         { "mnemonic": "pshb" },
@@ -77,7 +77,7 @@
     },
     {
       "name": "attach_ssm_comm_type",
-      "depends_on": ["print_upper_screen"],
+      "depends_on": ["set_upper_screen_buffer"],
       "pattern": [
         { "mnemonic": "clr",  "op_str": "VAR{no_success_on_first_connection_flag}" },
         { "max_skip": 1 },
@@ -280,6 +280,63 @@
         { "mnemonic": "stx", "op_str": "VAR{romid_lower_label_pointer}" }
       ],
       "description": "Skip is unclear yet for other cassettes"
+    },
+    {
+      "name": "set_maximum_menuitem_and_hidden_menuitem_indexes",
+      "depends_on": ["attach_cu_specific_addresses"],
+      "start_address": "REF{attach_cu_specific_addresses}",
+      "pattern": [
+        { "mnemonic": "clr", "op_str": "VAR{maximum_menuitem_index_1}"},
+        { "mnemonic": "jsr", "op_str": "FN{set_current_pointer_possible_menuitems}"},
+        { "mnemonic": "stx", "op_str": "VAR{final_menuitems_pointer}"},
+        { "mnemonic": "ldab", "op_str": "REF{max_length_menuitems_1}"}
+      ],
+      "description": "IMPREZA96 @0x8AD4"
+    },
+    {
+      "name": "master_table_main_loop",
+      "pattern": [
+        { "mnemonic": "tst", "op_str": "VAR{IF_Check_Active_tbd}" },
+        { "mnemonic": "beq" },
+        { "mnemonic": "tst" },
+        { "mnemonic": "bne" },
+        { "mnemonic": "clr" },
+        { "mnemonic": "tst" },
+        { "mnemonic": "beq" },
+        { "mnemonic": "ldd", "op_str": "VAR{mastertable_0_0}" },
+        { "mnemonic": "std", "op_str": "VAR{mastertable_0_1}" },
+        { "mnemonic": "ldd", "op_str": "VAR{mastertable_2_0}" },
+        { "mnemonic": "std", "op_str": "VAR{mastertable_2_1}" }
+      ],
+      "description": "Main Loop where the master table is checked and the menu is running. Mainly to know when to interrupt an infinite loop"
+    },
+    {
+      "name": "master_table_main_loop_worker_jumps",
+      "depends_on": ["master_table_main_loop"],
+      "pattern": [
+        { "mnemonic": "ldx", "op_str": "VAR{master_table_worker_functions_ptr}" },
+        { "mnemonic": "aslb" },
+        { "mnemonic": "abx" },
+        { "mnemonic": "ldx", "op_str": 0 },
+        { "mnemonic": "bne"},
+        { "mnemonic": "jmp", "op_str": "REF{master_table_main_loop}"}
+      ],
+      "description": "IMPREZA96 @0x8EA4: Get a list of worker function pointers which get called dynamically"
+    }
+  ],
+  "master_table_pointer_pattern":
+  [
+    {
+      "name": "master_table_info_into_ram",
+      "depends_on": ["master_table_main_loop"],
+      "pattern": [
+        { "mnemonic": "tst", "op_str": "VAR{romid_A_is_0x20}" },
+        { "mnemonic": "beq" },
+        { "mnemonic": "jsr", "op_str": "FN{long_table_baro_mani_comms}" },
+        { "mnemonic": "ldaa", "op_str": "VAR{current_mastertable_index}" },
+        { "mnemonic": "ldab"}
+      ],
+      "description": "IMPREZA96 @0x903C: Load information from the Mastertable list pointer into RAM values that'll be used in the Action fn later on"
     }
   ],
   "strings": {

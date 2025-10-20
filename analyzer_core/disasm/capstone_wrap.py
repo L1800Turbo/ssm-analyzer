@@ -76,16 +76,24 @@ class Disassembler630x:
         return instr
 
     
-    def disassemble_reachable(self, rom: bytes, start_addr: int) -> Tuple[List[Instruction], dict]:
+    def disassemble_reachable(self, 
+                              start_addr: int, 
+                              instructions: Optional[List[Instruction]] = None,
+                              call_tree: Optional[dict] = None
+                              ) -> Tuple[List[Instruction], dict]:
         """
         Disassembliert nur tatsächlich erreichbaren Code ab Startadresse und JSR/JMP-Zielen (rekursiv).
         """
         visited = set()
-        instructions = []
+        if instructions is None: instructions = []
         addr_to_instr_index = {}
-        call_tree = {}
+        if call_tree is None: call_tree = {}
         code_bytes = set()
         worklist = [(start_addr, start_addr, call_tree)]
+
+        # Skip addresses we detected in previous runs
+        for instr in instructions:
+            visited.add(instr.address)
 
         while worklist:
             start, func_entry, tree = worklist.pop()
