@@ -116,10 +116,8 @@ class RomIdTableAnalyzer:
                                     length = entry.entry_size,
                                     entries = []
                                 )
-            master_table_analyzer = MasterTableAnalyzer(self.emulator, 
-                                                    rom_cfg,
-                                                    entry.master_table
-            )
+            master_table_analyzer = MasterTableAnalyzer(self.emulator, rom_cfg, entry)
+            master_table_analyzer.collect_master_table_entries()
 
     # TODO: move to RomIdEntryAnalyzer
     def __execute_save_table_pointer_to_memory(self, entry: RomIdTableEntry_512kb) -> None:
