@@ -88,12 +88,12 @@ class Emulator6303:
             raise ValueError(f"Unsupported operand type: {instr.target_type}")
         
         return MemAccess(
-            addr=addr,
+            instr=instr,
+            target_addr=addr,
             var=self.rom_config.get_by_address(addr) if addr is not None else None,
             value=val,
             rw='R',
             by=self.PC,
-            instr_addr=self.PC,
             next_instr_addr=None
         )
 
@@ -114,12 +114,12 @@ class Emulator6303:
             raise ValueError(f"Unsupported operand type: {instr.target_type}")
 
         return MemAccess(
-            addr=addr,
+            instr=instr,
+            target_addr=addr,
             var=self.rom_config.get_by_address(addr) if addr is not None else None,
             value=val,
             rw='R',
             by=self.PC,
-            instr_addr=self.PC,
             next_instr_addr=None
         )
     
@@ -245,11 +245,6 @@ class Emulator6303:
     def _fetch_instruction(self) -> Optional[Instruction]:
         return self.dasm.disassemble_step(self.PC)
 
-    # def add_mock(self, addr: int, func):
-    #     self._mocked[addr & 0xFFFF] = func
-
-    # def clear_mocks(self):
-    #     self._mocked.clear()
 
     def step(self) -> Optional[MemAccess]:
         # Check if this function is checked to be mocked
@@ -268,7 +263,7 @@ class Emulator6303:
             asm_step: MemAccess = func(instr)
 
             # TODO hier die steps auswerten?
-            #print(asm_step)
+            print(asm_step)
 
             return asm_step
         
@@ -282,8 +277,11 @@ class Emulator6303:
     # --- High-level run helpers (wie v2: run_function_end) ---
     def run_function_end(self, max_steps: int = 100000, clear_mocks_after: bool = True) -> Optional[MemAccess]:
         """
-        Läuft ab aktuellem PC bis zum Funktionsende (RTS), mit Sentinel (FFFF).
+        Run from the current PC until a RTS/RTI is reached.
         """
+
+        #depth = 0
+
         sentinel = 0xFFFF
         last_step = None
         # Push Sentinel (=Return-Adresse), damit ein Rücksprung garantiert terminiert
@@ -292,8 +290,17 @@ class Emulator6303:
         while steps < max_steps:
             if self.PC == sentinel:
                 break
+
             last_step = self.step()
             steps += 1
+
+            # if last_step and last_step.instr.is_function_call:
+            #     depth += 1
+            # elif last_step and last_step.instr.is_return:
+            #     if depth == 0:
+            #         break
+            #     depth -= 1
+
         # if clear_mocks_after:
         #     self.clear_mocks()
 
@@ -357,12 +364,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-                addr=addr,
+                instr=instr,
+                target_addr=addr,
                 var=self.rom_config.get_by_address(addr),
                 value=val,
                 rw='W',
                 by=self.PC,
-                instr_addr=old_PC,
                 next_instr_addr=self.PC
             )
 
@@ -386,12 +393,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-                addr=addr,
+                instr=instr,
+                target_addr=addr,
                 var=self.rom_config.get_by_address(addr),
                 value=val,
                 rw='W',
                 by=self.PC,
-                instr_addr=old_PC,
                 next_instr_addr=self.PC
             )
 
@@ -439,12 +446,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=addr,
+            instr=instr,
+            target_addr=addr,
             var=self.rom_config.get_by_address(addr),
             value=val,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -463,12 +470,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=address,
+            instr=instr,
+            target_addr=address,
             var=self.rom_config.get_by_address(address),
             value=val,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -482,17 +489,9 @@ class Emulator6303:
         self._set_ZN_8(self.A)
         self.flags.V = 0
 
-        old_PC = self.PC
         self.PC += instr.size
-        return MemAccess(
-            addr=ma.addr,
-            var=ma.var,
-            value=self.A,
-            rw='W',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr = self.PC
+        return ma
     
     @operand_needed
     def andb(self, instr: Instruction) -> MemAccess:
@@ -506,15 +505,8 @@ class Emulator6303:
 
         old_PC = self.PC
         self.PC += instr.size
-        return MemAccess(
-            addr=ma.addr,
-            var=ma.var,
-            value=self.B,
-            rw='W',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr = self.PC
+        return ma
     
     @operand_needed
     def bita(self, instr: Instruction) -> MemAccess:
@@ -525,17 +517,9 @@ class Emulator6303:
         self._set_ZN_8(self.A & ma.value)
         self.flags.V = 0
 
-        old_PC = self.PC
         self.PC += instr.size
-        return MemAccess(
-            addr=ma.addr,
-            var=ma.var,
-            value=self.A & ma.value,
-            rw='R',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr = self.PC
+        return ma
 
     @operand_needed
     def cmpa(self, instr: Instruction) -> MemAccess:
@@ -545,17 +529,9 @@ class Emulator6303:
         
         _ = self._SUB8(self.A, ma.value)
 
-        old_PC = self.PC
         self.PC += instr.size
-        return MemAccess(
-            addr=ma.addr,
-            var=ma.var,
-            value=self.A,
-            rw='R',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr = self.PC
+        return ma
 
     @operand_needed
     def cmpb(self, instr: Instruction) -> MemAccess:
@@ -567,15 +543,8 @@ class Emulator6303:
 
         old_PC = self.PC
         self.PC += instr.size
-        return MemAccess(
-            addr=ma.addr,
-            var=ma.var,
-            value=self.B,
-            rw='R',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr = self.PC
+        return ma
 
     @operand_needed
     def oraa(self, instr: Instruction) -> MemAccess:
@@ -588,15 +557,8 @@ class Emulator6303:
 
         old_PC = self.PC
         self.PC += instr.size
-        return MemAccess(
-            addr=ma.addr,
-            var=ma.var,
-            value=self.A,
-            rw='W',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr = self.PC
+        return ma
     
     @operand_needed
     def orab(self, instr: Instruction) -> MemAccess:
@@ -609,15 +571,8 @@ class Emulator6303:
 
         old_PC = self.PC
         self.PC += instr.size
-        return MemAccess(
-            addr=ma.addr,
-            var=ma.var,
-            value=self.B,
-            rw='W',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr = self.PC
+        return ma
 
     def clra(self, instr: Instruction) -> MemAccess:
         self.A = 0
@@ -628,12 +583,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -646,12 +601,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -670,42 +625,40 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=addr,
+            instr=instr,
+            target_addr=addr,
             var=self.rom_config.get_by_address(addr),
             value=0,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
     def asla(self, instr: Instruction) -> MemAccess:
         self.A = self._shift_left(self.A)
 
-        old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
     def aslb(self, instr: Instruction) -> MemAccess:
         self.B = self._shift_left(self.B)
         
-        old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.B),
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -715,12 +668,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -730,12 +683,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -745,12 +698,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -760,12 +713,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.B),
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -775,12 +728,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -790,12 +743,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.B),
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -805,12 +758,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -820,12 +773,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.B),
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
         
@@ -961,12 +914,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -977,12 +930,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.B),
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -993,12 +946,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1009,24 +962,24 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.B),
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
     @operand_needed
     def inc(self, instr: Instruction) -> MemAccess:
         ma = self.__read_value8(instr)
-        if ma.addr is None or ma.value is None:
+        if ma.target_addr is None or ma.value is None:
             raise ValueError("Invalid memory access")
         
         result = (ma.value + 1) & 0xFF
         self._set_ZN_8(result)
-        self.write8(ma.addr, result)
+        self.write8(ma.target_addr, result)
 
         ma.value = result
         ma.rw = 'W'
@@ -1038,11 +991,11 @@ class Emulator6303:
     @operand_needed
     def dec(self, instr: Instruction) -> MemAccess:
         ma = self.__read_value8(instr)
-        if ma.addr is None or ma.value is None:
+        if ma.target_addr is None or ma.value is None:
             raise ValueError("Invalid memory access")
         result = (ma.value - 1) & 0xFF
         self._set_ZN_8(result)
-        self.write8(ma.addr, result)
+        self.write8(ma.target_addr, result)
         
         ma.value = result
         ma.rw = 'W'
@@ -1061,12 +1014,12 @@ class Emulator6303:
         old_PC = self.PC
         self.PC += instr.size
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.A),
             value=result,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -1084,12 +1037,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.X),
             value=self.X,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -1106,12 +1059,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.X),
             value=self.X,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1122,12 +1075,12 @@ class Emulator6303:
         self.PC = instr.target_value # type: ignore
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.PC),
             value=None,
             rw='X',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1141,12 +1094,12 @@ class Emulator6303:
             self.PC += instr.size
         
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.PC),
             value=None,
             rw='X',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
         
@@ -1162,12 +1115,12 @@ class Emulator6303:
             self.PC += instr.size
         
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.PC),
             value=None,
             rw='X',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -1181,12 +1134,12 @@ class Emulator6303:
             self.PC += instr.size
         
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.PC),
             value=None,
             rw='X',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1201,12 +1154,12 @@ class Emulator6303:
             self.PC += instr.size
         
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.PC),
             value=None,
             rw='X',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -1217,12 +1170,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.SP,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
@@ -1233,12 +1186,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.SP,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1251,12 +1204,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.SP,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1267,12 +1220,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.SP,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1283,12 +1236,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1298,12 +1251,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1317,12 +1270,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1334,12 +1287,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1350,12 +1303,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.A,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1366,12 +1319,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.B,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1381,12 +1334,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=None,
             rw='',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1397,12 +1350,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=None,
             rw='',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1413,12 +1366,12 @@ class Emulator6303:
         # Flags ggf. vom Stack holen (optional)
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=None,
             rw='',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1426,7 +1379,7 @@ class Emulator6303:
     def tst(self, instr: Instruction) -> MemAccess:
         ma = self.__read_value8(instr)
         
-        if ma.addr is None or ma.value is None:
+        if ma.target_addr is None or ma.value is None:
             raise ValueError("Invalid memory access")
 
 
@@ -1437,16 +1390,8 @@ class Emulator6303:
 
         old_PC = self.PC
         self.PC += instr.size
-
-        return MemAccess(
-            addr=ma.addr,
-            var=self.rom_config.get_by_address(ma.addr),
-            value=ma.value,
-            rw='R',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr=self.PC
+        return ma
 
     # @operand_needed
     # def daa(self, insn: CsInsn):
@@ -1467,12 +1412,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.X,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1483,12 +1428,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.X,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1499,12 +1444,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.X,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1522,15 +1467,8 @@ class Emulator6303:
 
         old_PC = self.PC
         self.PC += instr.size  
-        return MemAccess(
-            addr=ma.addr,
-            var=None,
-            value=ma.value,
-            rw='R',
-            by=self.PC,
-            instr_addr=old_PC,
-            next_instr_addr=self.PC
-        )
+        ma.next_instr_addr=self.PC
+        return ma
 
     # @operand_needed
     # def bsr(self, insn: CsInsn):
@@ -1551,12 +1489,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.X,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
   
@@ -1568,12 +1506,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.flags.C,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1584,12 +1522,12 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.flags.C,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1600,12 +1538,12 @@ class Emulator6303:
         self.PC = instr.target_value # type: ignore
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.PC),
             value=None,
             rw='X',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1624,12 +1562,12 @@ class Emulator6303:
             raise ValueError("Couldn't determine jumping address for jsr.")
         self.PC:int = instr.target_value
         return MemAccess(
-            addr=self.PC,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(self.PC),
             value=None,
             rw='X',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
 
@@ -1649,12 +1587,12 @@ class Emulator6303:
             new_PC = old_PC
            
         return MemAccess(
-            addr=new_PC,
+            instr=instr,
+            target_addr=None,
             var=self.rom_config.get_by_address(new_PC),
             value=None,
             rw='X',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=new_PC
         )
 
@@ -1666,150 +1604,13 @@ class Emulator6303:
         self.PC += instr.size
 
         return MemAccess(
-            addr=None,
+            instr=instr,
+            target_addr=None,
             var=None,
             value=self.flags.I,
             rw='W',
             by=self.PC,
-            instr_addr=old_PC,
             next_instr_addr=self.PC
         )
     
 
-
-
-    '''
-          # --- A handful of core instructions (erweiterbar) ---
-        if instr.mnemonic == "nop":
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-
-
-        if mnem == "ldd":  # 16-bit -> A:B
-            val16 = self._read_operand16(ops)
-            self.A = (val16 >> 8) & 0xFF
-            self.B = val16 & 0xFF
-            self.flags.flags.Z = 1 if val16 == 0 else 0
-            self.flags.N = 1 if (val16 & 0x8000) else 0
-            self.flags.V = 0
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "ldx":
-            val16 = self._read_operand16(ops)
-            self.X = val16 & 0xFFFF
-            self.flags.flags.Z = 1 if self.X == 0 else 0
-            self.flags.N = 1 if (self.X & 0x8000) else 0
-            self.flags.V = 0
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-
-        if mnem == "std":
-            addr = self._addr_from_operand(ops, bits=16)
-            self.write16(addr, ((self.A & 0xFF) << 8) | (self.B & 0xFF))
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "stx":
-            addr = self._addr_from_operand(ops, bits=16)
-            self.write16(addr, self.X)
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "anda":
-            v = self._read_operand8(ops)
-            self.A = self._AND8(self.A, v)
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "andb":
-            v = self._read_operand8(ops)
-            self.B = self._AND8(self.B, v)
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "oraa":
-            v = self._read_operand8(ops)
-            self.A = self._OR8(self.A, v)
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "orab":
-            v = self._read_operand8(ops)
-            self.B = self._OR8(self.B, v)
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "cmpa":
-            v = self._read_operand8(ops)
-            _ = self._SUB8(self.A, v)
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "cmpb":
-            v = self._read_operand8(ops)
-            _ = self._SUB8(self.B, v)
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "tst":  # test mem or reg: we support direct mem test here
-            v = self._read_operand8(ops)
-            self._set_ZN_8(v); self.flags.V = 0
-            self.PC = (self.PC + instr.size) & 0xFFFF
-            return
-
-        if mnem == "psha":
-            self.push8(self.A); self.PC = (self.PC + instr.size) & 0xFFFF; return
-        if mnem == "pshb":
-            self.push8(self.B); self.PC = (self.PC + instr.size) & 0xFFFF; return
-        if mnem == "pula":
-            self.A = self.pull8(); self._set_ZN_8(self.A); self.PC = (self.PC + instr.size) & 0xFFFF; return
-        if mnem == "pulb":
-            self.B = self.pull8(); self._set_ZN_8(self.B); self.PC = (self.PC + instr.size) & 0xFFFF; return
-
-        if mnem == "rts":
-            self._rts(); return
-
-        if mnem == "jsr":
-            target = self._abs_from_operand(ops)
-            # Mock interception?
-            if target in self._mocked:
-                # Simuliere Call: Push Rücksprung, springe in Mock
-                ret = (self.PC + insn.size) & 0xFFFF
-                self.push16(ret)
-                self._mockedtarget
-                return
-            self._jsr(insn, target)
-            return
-
-        if mnem == "jmp":
-            target = self._abs_from_operand(ops)
-            self._jmp(target); return
-
-        # Relative Branches (8 Bit): beq/bne/bcc/bcs/bra
-        if mnem in ("beq", "bne", "bcc", "bcs", "bra"):
-            take = False
-            if mnem == "beq": take = (self.flags.flags.Z == 1)
-            if mnem == "bne": take = (self.flags.flags.Z == 0)
-            if mnem == "bcc": take = (self.flags.C == 0)
-            if mnem == "bcs": take = (self.flags.C == 1)
-            if mnem == "bra": take = True
-            if take:
-                # Capstone liefert op_str meist schon als $ADDR; wir rechnen fallback relativ:
-                if ops.startswith("$"):
-                    self.PC = int(ops[1:], 16) & 0xFFFF
-                else:
-                    # 2. Byte als signed offset
-                    # Wir lesen direkt aus Speicher (PC+1)
-                    rel = self.read8((self.PC + 1) & 0xFFFF)
-                    if rel & 0x80: rel -= 0x100
-                    self.PC = (self.PC + insn.size + rel) & 0xFFFF
-            else:
-                self.PC = (self.PC + insn.size) & 0xFFFF
-            return
-
-        # Fallback: unimplemented
-        raise NotImplementedError(f"Unsupported instruction {mnem} {ops} at ${self.PC:04X}")
-        '''

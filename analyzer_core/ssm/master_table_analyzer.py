@@ -1,6 +1,7 @@
 from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.config.ssm_model import MasterTableEntry, MasterTableInfo, RomEmulationError, RomIdTableEntry_512kb
 from analyzer_core.emu.emulator_6303 import Emulator6303
+from analyzer_core.ssm.master_table_entry_analyzer import MasterTableEntryAnalyzer
 
 
 class MasterTableAnalyzer:
@@ -46,4 +47,7 @@ class MasterTableAnalyzer:
 
             entry = MasterTableEntry.from_bytes(mt_entry_bytes)
             self.__romid_entry.master_table.entries.append(entry)
+
+            # TODO so sauber? Nicht das Zeug hier alles da rein?
+            entry_analyzer = MasterTableEntryAnalyzer(self.__emulator, self.__rom_cfg, self.__romid_entry, entry)
 

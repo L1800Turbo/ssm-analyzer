@@ -180,6 +180,16 @@ class RomIdEntryAnalyzer:
         rom_cfg = self.rom_cfg
         emu = self.emulator
 
+        def hook_lesen_test(addr:int,val:int):
+            print("hallo")
+        
+        def hook_schreiben_test(addr:int,val:int):
+            print("hallo2")
+        
+        emu.hooks.add_read_hook(self.rom_cfg.address_by_name('menuitems_lower_label_pointer'), hook_lesen_test)
+        emu.hooks.add_write_hook(self.rom_cfg.address_by_name('menuitems_lower_label_pointer'), hook_schreiben_test)
+
+
         attach_addr = rom_cfg.address_by_name("attach_cu_specific_addresses")
         emu.set_pc(attach_addr)
         emu.run_function_end()
@@ -187,6 +197,8 @@ class RomIdEntryAnalyzer:
         # Read back configured addresses into the entry (if present in rom_cfg)
         def ra(name):
             return emu.read16(rom_cfg.address_by_name(name))
+        
+        print(f"menuitems_lower_label_pointer {rom_cfg.address_by_name('menuitems_lower_label_pointer'):04X} -> {ra('menuitems_lower_label_pointer'):04X}")
 
 
         self.entry.max_length_menuitems = emu.read8(rom_cfg.address_by_name('max_length_menuitems_1'))

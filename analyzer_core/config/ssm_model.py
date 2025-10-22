@@ -91,6 +91,9 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
         unpacked = struct.unpack(cls.struct_format, table_bytes)
         return RomIdTableEntry_512kb(*unpacked)
     
+    def print_romid_str(self):
+        return f"{self.romid0:02X} {self.romid1:02X} {self.romid2:02X}"
+    
 
 @dataclass
 class MasterTableInfo:
@@ -98,7 +101,6 @@ class MasterTableInfo:
     length: int
 
     entries: list["MasterTableEntry"]
-
 
 @dataclass
 class MasterTableEntry:
@@ -120,6 +122,10 @@ class MasterTableEntry:
 
     struct_format = ">BBBBHBBBBBBBB"
     entry_size = struct.calcsize(struct_format)  # = 12 Bytes
+
+    hidden: Optional[bool] = False
+    upper_label: Optional[str] = ""
+    lower_label: Optional[str] = ""
 
     @classmethod
     def from_bytes(cls, table_bytes:bytes) -> "MasterTableEntry":

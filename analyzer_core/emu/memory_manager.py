@@ -62,6 +62,10 @@ class MemoryManager:
         region = self.memory_map.region_lookup(address)
         if not region:
             raise ValueError(f"Address 0x{address:04X} not mapped to any region.")
+        
+        if self.hooks:
+            self.hooks.run_write_hooks(address, value)
+            
         if region.kind == RegionKind.RAM:
             self.ram[address - region.start] = value & 0xFF
         elif region.kind == RegionKind.IO:

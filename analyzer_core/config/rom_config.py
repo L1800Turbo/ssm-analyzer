@@ -2,6 +2,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Optional, Union
 
+from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo
 
 class RomConfigError(Exception):
@@ -46,6 +47,9 @@ class RomConfig:
 
         self.__offsets: dict[CurrentSelectedDevice, int] = {}
         self.romid_tables: dict[CurrentSelectedDevice, RomIdTableInfo] = {}
+
+        self.byte_interpreter = ByteInterpreter()
+        self.byte_interpreter.add(0xA5, "᛫")
 
         # Ports/DDR
         # TODO nicht auf Dauer hier lassen
