@@ -99,13 +99,6 @@ class RomService:
         # - Emulator
 
 
-
-        """Run analysis pipeline and return result DTO."""
-        # rom_image, config, metadata = self.load(rom_path)
-        # pipeline = AnalysisPipeline(pipeline_cfg)
-        # result = pipeline.run(rom_image, config, metadata)
-        # return result
-
     # def get_catalog(self, root_folder: Path) -> RomCatalog:
     #     """Discover and return ROM catalog (lazy discovery)."""
     #     discovery = RomDiscoveryService()

@@ -104,10 +104,10 @@ class MasterTableInfo:
 
 @dataclass
 class MasterTableEntry:
-    menu_item_0: int # like  8F	80	81	00
+    menu_item_0: int # like  8F	80	81
     menu_item_1: int
     menu_item_2: int
-    menu_item_3: int
+    mt_index_3_tbd: int
     action_address_rel: int # Offset depends on ECU
     scaling_index: int
     address_index: int
@@ -126,6 +126,9 @@ class MasterTableEntry:
     hidden: Optional[bool] = False
     upper_label: Optional[str] = ""
     lower_label: Optional[str] = ""
+
+    def menu_item_str(self):
+        return f"{(self.menu_item_0&0xF):0X}{(self.menu_item_1&0xF):0X}{(self.menu_item_2&0xF):0X}"
 
     @classmethod
     def from_bytes(cls, table_bytes:bytes) -> "MasterTableEntry":

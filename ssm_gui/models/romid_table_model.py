@@ -27,6 +27,8 @@ class RomIdTableModel(QAbstractTableModel):
         if not index.isValid() or role != Qt.ItemDataRole.DisplayRole:
             return None
 
+        if self.romid_table is None:
+            return None
         entry = self.romid_table.entries[index.row()]
         col = index.column()
 
