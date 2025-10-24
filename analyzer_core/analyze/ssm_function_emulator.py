@@ -52,7 +52,7 @@ class SsmFunctionEmulator:
         for current_device in CurrentSelectedDevice:
 
             # Initialize an emulator seperately for each run
-            emulator = Emulator6303(rom_image=self.rom_image)
+            emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
             emulator.set_pc(start_address)
 
             # Initial state
@@ -85,7 +85,7 @@ class SsmFunctionEmulator:
 
         # Take every device posibility, find out if they actually exist
         for current_device in CurrentSelectedDevice:
-            emulator = Emulator6303(rom_image=self.rom_image)
+            emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
             emulator.set_pc(start_address)
 
             # Adjust offset for the current device
@@ -169,7 +169,7 @@ class SsmFunctionEmulator:
             current_table_info = self.rom_cfg.romid_tables[current_device]
 
             # Let separate emulation run for each ECU
-            emulator = Emulator6303(rom_image=self.rom_image)
+            emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
             emulator.set_pc(0xFFFF)
 
             # Adjust offset for the current device (mapped ROM area)

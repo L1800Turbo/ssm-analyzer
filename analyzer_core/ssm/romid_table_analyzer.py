@@ -101,7 +101,7 @@ class RomIdTableAnalyzer:
             entry_analyzer.collect_cmd_protocols()
 
             # request romid to capture hardcoded values (may prune protocols etc.)
-            entry_analyzer.request_romid_and_capture()
+            entry_analyzer.request_romid_and_capture(current_device)
 
             # write the pointer for this entry into RAM for other functions to use
             self.__execute_save_table_pointer_to_memory(entry)

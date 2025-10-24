@@ -50,6 +50,7 @@ class RomConfig:
 
         self.byte_interpreter = ByteInterpreter()
         self.byte_interpreter.add(0xA5, "᛫")
+        self.byte_interpreter.add(0xDF, "°")
 
         # Ports/DDR
         # TODO nicht auf Dauer hier lassen
@@ -58,6 +59,8 @@ class RomConfig:
         self.add_port("PORT5", 0x15)
         self.add_port("PORT6", 0x17)
         self.add_port("DDR6",  0x16)
+
+        self.__stack_pointer = 0x01FF
 
     # ------------------- Add -------------------
     def add_port(self, name: str, address: int):
@@ -141,3 +144,10 @@ class RomConfig:
     
     def get_offset(self, dev: CurrentSelectedDevice) -> int:
         return self.__offsets[dev]
+    
+    # ------------------- Stack pointers -------------------
+    def set_stack_pointer(self, stack_pointer:int) -> None:
+        self.__stack_pointer = stack_pointer
+    
+    def get_stack_pointer(self) -> int:
+        return self.__stack_pointer

@@ -48,7 +48,7 @@ class Emulator6303:
         tracer: Optional[ExecutionTracer] = None,
         memory_map: Optional[MemoryMap] = None,
         start_pc: int = 0xFFFF,
-        initial_sp: int = 0x01FF
+        initial_sp: Optional[int] = None
     ) -> None:
         
         self.logger = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ class Emulator6303:
         self.A = 0
         self.B = 0
         self.X = 0
-        self.SP = initial_sp & 0xFFFF
+        self.SP = initial_sp if initial_sp is not None else self.rom_config.get_stack_pointer()
         self.PC = start_pc & 0xFFFF
         self.flags = CPUFlags()
 
@@ -263,7 +263,7 @@ class Emulator6303:
             asm_step: MemAccess = func(instr)
 
             # TODO hier die steps auswerten?
-            print(asm_step)
+            #print(asm_step)
 
             return asm_step
         

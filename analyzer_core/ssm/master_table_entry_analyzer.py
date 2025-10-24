@@ -31,7 +31,8 @@ class MasterTableEntryAnalyzer:
 
         self.mt_entry.upper_label = label_to_mt(self.romid_entry.menuitems_upper_label_pointer, self.mt_entry.upper_label_index)
         
-        # TODO geht noch nicht, die Geschichte mit dem stack ist noch falsch
-        #self.mt_entry.lower_label = label_to_mt(self.romid_entry.menuitems_lower_label_pointer, self.mt_entry.lower_label_index)
+        # TODO geht noch nicht, die Geschichte mit dem stack ist noch falsch, wird bei AC8E geladen und dann auch direkt die ACTION
+        # if self.mt_entry.lower_label_index != 0xFF:
+        #    self.mt_entry.lower_label = label_to_mt(self.romid_entry.menuitems_lower_label_pointer, self.mt_entry.lower_label_index)
 
        

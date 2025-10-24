@@ -49,6 +49,15 @@ class RomService:
 
         self.instr_list, self.call_tree = self.disassemble_from_reset(rom_image)
 
+        # Adjust stack pointer if found
+        stack_pointers = Disassembler630x.find_stackpointer(self.instr_list)
+        if isinstance(stack_pointers, int):
+            self.logger.debug(f"Setting default stack pointer to {stack_pointers}")
+            self.config.set_stack_pointer(stack_pointers)
+        elif isinstance(stack_pointers, set):
+            raise NotImplementedError("Only one stack pointer definition is currently supported")
+            
+
 
         # Get pattern repository TODO festen Pfad ändern
         pattern_repo = PatternRepository(Path("./ressources/rom_patterns.json"))
@@ -153,7 +162,7 @@ class RomService:
     def init_emulator(self, rom_image: RomImage) -> None:
         """Initialize the emulator."""
         self.logger.info("Initializing emulator.")
-        self.emulator = Emulator6303(rom_image=rom_image)
+        self.emulator = Emulator6303(rom_image=rom_image, rom_config=self.config)
 
         # TODO Nur als Test
 

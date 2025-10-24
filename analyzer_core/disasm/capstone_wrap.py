@@ -166,6 +166,23 @@ class Disassembler630x:
 
         instructions.sort(key=lambda x: x.address)
         return instructions, call_tree
+    
+    @classmethod
+    def find_stackpointer(cls, instructions: List[Instruction]) -> Optional[set|int]:
+        stack_pointers:set[int] = set()
+        
+        for instr in instructions:
+            if instr.mnemonic == "lds":
+                if instr.target_value is None:
+                    raise RuntimeError("find_stackpointer: Found lds instruction, but no target value")
+                stack_pointers.add(instr.target_value)
+        
+        if len(stack_pointers) > 1:
+            return stack_pointers
+        elif len(stack_pointers) > 0:
+            return stack_pointers.pop()
+        return None
+
 
 
 

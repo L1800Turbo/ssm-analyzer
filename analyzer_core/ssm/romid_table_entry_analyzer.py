@@ -2,7 +2,7 @@ from typing import Optional, List, Tuple
 import logging
 
 from analyzer_core.emu.emulator_6303 import Emulator6303
-from analyzer_core.config.rom_config import RomConfig
+from analyzer_core.config.rom_config import RomConfig, RomConfigError
 from analyzer_core.config.ssm_model import RomEmulationError, RomIdTableEntry_512kb, CurrentSelectedDevice
 
 class RomIdEntryAnalyzer:
@@ -84,7 +84,7 @@ class RomIdEntryAnalyzer:
         #return collected
         self.entry.ssm_cmd_protocols = collected
 
-    def request_romid_and_capture(self) -> None:
+    def request_romid_and_capture(self, current_device: CurrentSelectedDevice) -> None:
         """
         Fährt request_romid_save_romid und versucht, dabei hard-coded RomID/ command zu erfassen.
         Liefert das zuletzt erfasste request_cmd tuple (4 bytes).
@@ -115,12 +115,25 @@ class RomIdEntryAnalyzer:
             emu.write8(rom_cfg.address_by_name('ssm_rx_byte_2'), self.entry.romid2)
 
         # We don't really want to search the RomID, we already know it. So just return.
-        def mock_search_matching_romid_96(em: Emulator6303):
+        def mock_search_matching_romid(em: Emulator6303):
             insn = em.dasm.disassemble_step(em.PC)
             if not insn:
                 raise RuntimeError("Couldn't fetch mock_search_matching_romid_96 instruction")
             em.clc(insn)
             em.rts(insn)
+
+            # search_matching_romid defines if it's an Axx RomID, set it manually
+            if current_device == CurrentSelectedDevice.EGI and (self.entry.romid0 & 0xA0) == 0xA0:
+                emu.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x1)
+            else:
+                emu.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x0)
+
+            # AT Axx RomIDs don't exist before '97
+            if rom_cfg.check_for_address('romid_AT_Axxx_scheme'):
+                if current_device == CurrentSelectedDevice.AT and (self.entry.romid0 >> 8) == 0xA:
+                    emu.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x1)
+                else:
+                    emu.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x0)
 
 
         # Get the right funktion pointer
@@ -151,7 +164,7 @@ class RomIdEntryAnalyzer:
 
             # Set hooks and mocks
             emu.hooks.add_read_hook(self.rom_cfg.address_by_name('ssm_receive_status'), hook_get_ssm_receive_status)
-            emu.hooks.mock_function(search_matching_romid_ptr, mock_search_matching_romid_96)
+            emu.hooks.mock_function(search_matching_romid_ptr, mock_search_matching_romid)
 
             emu.run_function_end()
 
@@ -180,39 +193,26 @@ class RomIdEntryAnalyzer:
         rom_cfg = self.rom_cfg
         emu = self.emulator
 
-        def hook_lesen_test(addr:int,val:int):
-            print("hallo")
-        
-        def hook_schreiben_test(addr:int,val:int):
-            print("hallo2")
-        
-        emu.hooks.add_read_hook(self.rom_cfg.address_by_name('menuitems_lower_label_pointer'), hook_lesen_test)
-        emu.hooks.add_write_hook(self.rom_cfg.address_by_name('menuitems_lower_label_pointer'), hook_schreiben_test)
-
-
         attach_addr = rom_cfg.address_by_name("attach_cu_specific_addresses")
         emu.set_pc(attach_addr)
         emu.run_function_end()
 
         # Read back configured addresses into the entry (if present in rom_cfg)
-        def ra(name):
+        def ra16(name):
             return emu.read16(rom_cfg.address_by_name(name))
-        
-        print(f"menuitems_lower_label_pointer {rom_cfg.address_by_name('menuitems_lower_label_pointer'):04X} -> {ra('menuitems_lower_label_pointer'):04X}")
-
 
         self.entry.max_length_menuitems = emu.read8(rom_cfg.address_by_name('max_length_menuitems_1'))
         self.entry.max_length_hidden_menuitems = emu.read8(rom_cfg.address_by_name('max_length_hidden_menuitems'))
-        self.entry.temporary_menuitems_pointer = ra('temporary_menuitems_pointer')
-        self.entry.temporary_hidden_menuitems_pointer = ra('possible_hidden_menuitems_pointer')
-        self.entry.menuitems_upper_label_pointer = ra('menuitems_upper_label_pointer')
-        self.entry.menuitems_lower_label_pointer = ra('menuitems_lower_label_pointer')
-        self.entry.adjustments_label_pointer = ra('adjustments_label_pointer')
-        self.entry.current_scale_table_pointer = ra('current_scale_table_pointer')
-        self.entry.romid_upper_label_pointer = ra('romid_upper_label_pointer')
-        self.entry.romid_lower_label_pointer = ra('romid_lower_label_pointer')
+        self.entry.temporary_menuitems_pointer = ra16('temporary_menuitems_pointer')
+        self.entry.temporary_hidden_menuitems_pointer = ra16('possible_hidden_menuitems_pointer')
+        self.entry.menuitems_upper_label_pointer = ra16('menuitems_upper_label_pointer')
+        self.entry.menuitems_lower_label_pointer = ra16('menuitems_lower_label_pointer')
+        self.entry.adjustments_label_pointer = ra16('adjustments_label_pointer')
+        self.entry.current_scale_table_pointer = ra16('current_scale_table_pointer')
+        self.entry.romid_upper_label_pointer = ra16('romid_upper_label_pointer')
+        self.entry.romid_lower_label_pointer = ra16('romid_lower_label_pointer')
 
         # Called by subcall to set_maximum_menuitem_and_hidden_menuitem_indexes
-        self.entry.final_menuitems_pointer = ra('final_menuitems_pointer')
+        self.entry.final_menuitems_pointer = ra16('final_menuitems_pointer')
 
         # TODO noch last_visible_menuitem_index, kann man auch selbst sonst mit FF, bzw die Funktion set_current_pointer_possible_hidden_menuitems
