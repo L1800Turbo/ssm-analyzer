@@ -19,11 +19,12 @@ from analyzer_core.analyze.repo import PatternRepository
 from analyzer_core.pipeline import AnalysisPipeline
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.disasm.insn_model import Instruction
+from analyzer_core.ssm.master_table_entry_analyzer import MasterTableEntryAnalyzer
 
 class RomService:
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.config = RomConfig()
+        self.rom_cfg = RomConfig()
 
         # TODO nur zum testen
         #self.config.add_function("wait_ms", 0xBD84)
@@ -47,51 +48,53 @@ class RomService:
     # TODO Ruft noch keiner auf gerade -> Hier könnte die Analyse-Pipeline integriert werden
     def analyze(self, rom_image: RomImage):
 
-        self.instr_list, self.call_tree = self.disassemble_from_reset(rom_image)
+        self.rom_cfg.instructions, self.rom_cfg.call_tree = self.disassemble_from_reset(rom_image)
 
         # Adjust stack pointer if found
-        stack_pointers = Disassembler630x.find_stackpointer(self.instr_list)
+        stack_pointers = Disassembler630x.find_stackpointer(self.rom_cfg.instructions)
         if isinstance(stack_pointers, int):
             self.logger.debug(f"Setting default stack pointer to {stack_pointers}")
-            self.config.set_stack_pointer(stack_pointers)
+            self.rom_cfg.set_stack_pointer(stack_pointers)
         elif isinstance(stack_pointers, set):
             raise NotImplementedError("Only one stack pointer definition is currently supported")
             
 
 
         # Get pattern repository TODO festen Pfad ändern
-        pattern_repo = PatternRepository(Path("./ressources/rom_patterns.json"))
+        self.rom_cfg.pattern_repo = PatternRepository(Path("./ressources/rom_patterns.json"))
 
         # Collect strings from ROM
-        string_finder = RomStringFinder(rom_image, pattern_repo, self.config)
+        string_finder = RomStringFinder(rom_image, self.rom_cfg.pattern_repo, self.rom_cfg)
         string_finder.find_string_references()
         
         # Detect assembly patterns from by Reset reachable functions
-        self.pattern_detector = PatternDetector(pattern_repo, self.config)
-        self.pattern_detector.detect_patterns(self.instr_list, "static_rom_pattern")
+        pattern_detector = PatternDetector(self.rom_cfg)
+        pattern_detector.detect_patterns(self.rom_cfg.instructions, "static_rom_pattern")
 
         # TODO Noch auslagern?
         # Detect functions called by master table worker pointer list
         worker_function_count = 8
         master_table_workers = []
         for i in range(worker_function_count):
-            offset = self.config.address_by_name("master_table_worker_functions_ptr") + i * 2 # 16bit
+            offset = self.rom_cfg.address_by_name("master_table_worker_functions_ptr") + i * 2 # 16bit
             ptr_bytes = rom_image.rom[offset:offset+2]
             master_table_workers.append(struct.unpack(">H", ptr_bytes)[0])
 
         self.disassemble_from_pointer_list(
             start_addresses=master_table_workers,
             rom_image=rom_image,
-            instructions=self.instr_list,
-            call_tree=self.call_tree
+            instructions=self.rom_cfg.instructions,
+            call_tree=self.rom_cfg.call_tree
             )
         
         # Second part pattern detections for functions that weren't statically reachable
-        self.pattern_detector.detect_patterns(self.instr_list, "master_table_pointer_pattern")
+        pattern_detector.detect_patterns(self.rom_cfg.instructions, "master_table_pointer_pattern")
 
         # Emulate functions to extract information
-        ssm_fn_emu = SsmFunctionEmulator(rom_image, self.config)
+        ssm_fn_emu = SsmFunctionEmulator(rom_image, self.rom_cfg)
         ssm_fn_emu.run_ssm_functions()
+
+        
 
 
         # TODO: für die Pipeline einbauen, vorher wohl einzeln
@@ -116,14 +119,14 @@ class RomService:
         """Load ROM image from file."""
         return RomImage(rom_path.read_bytes())
 
-    def disassemble_from_reset(self, rom_image: RomImage) -> Tuple[List[Instruction], dict]:
+    def disassemble_from_reset(self, rom_image: RomImage) -> Tuple[dict[int, Instruction], dict]:
         """
         Disassembliert nur tatsächlich erreichbaren Code ab Reset-Vektor und JSR/JMP-Zielen (rekursiv).
         """
         disasm = Disassembler630x(rom_image.rom)
 
         # Start fresh instruction and call tree lists
-        instructions: List[Instruction] = []
+        instructions: dict[int, Instruction] = {}
         call_tree: dict = {}
         try:
             from analyzer_core.data.rom_image import SSM1RomImage
@@ -138,7 +141,7 @@ class RomService:
 
         return instructions, call_tree
     
-    def disassemble_from_pointer_list(self, start_addresses: list[int], rom_image: RomImage, instructions: List[Instruction], call_tree: dict):
+    def disassemble_from_pointer_list(self, start_addresses: list[int], rom_image: RomImage, instructions: dict[int, Instruction], call_tree: dict):
         '''
         Disassemble code by a given list of addresses which work as a pointer
         '''
@@ -155,7 +158,7 @@ class RomService:
     def init_emulator(self, rom_image: RomImage) -> None:
         """Initialize the emulator."""
         self.logger.info("Initializing emulator.")
-        self.emulator = Emulator6303(rom_image=rom_image, rom_config=self.config)
+        self.emulator = Emulator6303(rom_image=rom_image, rom_config=self.rom_cfg)
 
         # TODO Nur als Test
 

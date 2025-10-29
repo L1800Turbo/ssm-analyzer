@@ -65,11 +65,11 @@ class RomCatalogWidget(QWidget):
             current_rom = QStandardItem(path.name)
             self.rom_info_model.appendRow([current_rom])
 
-            for ecu in service.config.selectable_devices:
+            for ecu in service.rom_cfg.selectable_devices:
                 current_ecu = QStandardItem(ecu.name)
                 current_rom.appendRow([current_ecu])
 
-                romid_table = service.config.romid_tables[ecu]
+                romid_table = service.rom_cfg.romid_tables[ecu]
                 current_ecu.appendRow([QStandardItem("pointer_addr"), QStandardItem(f"0x{romid_table.relative_pointer_addr:02X}")])
                 current_ecu.appendRow([QStandardItem("length"), QStandardItem(f"0x{romid_table.length:02X}")])
 

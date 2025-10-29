@@ -23,7 +23,9 @@ class MemAccess:
         fields = []
         fields.append(f"Instr={self.instr}")
         if self.var is not None:
-            fields.append(f"var={self.var}")
+            fields.append(f"var={self.var.name}")
+        if self.target_addr is not None:
+            fields.append(f"target_addr=0x{self.target_addr:04X}")
         if self.value is not None:
             fields.append(f"value=0x{self.value:02X}")
         fields.append(f"rw='{self.rw}'")

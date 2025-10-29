@@ -101,7 +101,7 @@ class AsmViewerWidget(QWidget):
         self.hex_model: Optional[ROMTableModel] = None
         self.fn_model: Optional[FunctionTableModel] = None
 
-        self.instructions: List[Instruction] = []
+        self.instructions: dict[int, Instruction] = {}
         self.addr_to_instr_index: Dict[int, int] = {}
         self.code_bytes: Set[int] = set()
 
@@ -355,17 +355,15 @@ class AsmViewerWidget(QWidget):
             self.curr_rom_service.analyze(self.rom_image)
             self.roms_updated.emit()
 
-            instructions = self.curr_rom_service.instr_list
+            self.instructions = self.curr_rom_service.rom_cfg.instructions
 
             # TODO: Instructions dann letztlich aus dem Objekt oholen
             #instructions: List[Instruction] = self.rom_service.disassemble_from_reset(self.rom_image)
 
             # Create display objects + functions/callers
-            display_items, functions_map, highlight_addrs, addr_to_idx, code_bytes = \
-                self._build_display_items(self.rom_image, instructions)
+            display_items, functions_map, highlight_addrs, code_bytes = \
+                self._build_display_items(self.rom_image, self.instructions)
 
-            self.instructions = instructions
-            self.addr_to_instr_index = addr_to_idx
             self.code_bytes = code_bytes
             self.display_items = display_items
             self.functions = functions_map
@@ -414,8 +412,8 @@ class AsmViewerWidget(QWidget):
     def _build_display_items(
         self,
         rom_image: RomImage,
-        instructions: List[Instruction],
-    ) -> Tuple[List[DisplayItem], Dict[int, FunctionInfo], Set[int], Dict[int, int], Set[int]]:
+        instructions: dict[int, Instruction],
+    ) -> Tuple[List[DisplayItem], Dict[int, FunctionInfo], Set[int], Set[int]]:
         """
         Creates DisplayItems (labels, code, data), uses function/caller info from core.
         """
@@ -425,18 +423,18 @@ class AsmViewerWidget(QWidget):
             raise LookupError("Can't build display items, current ROM service isn't selected, yet")
 
         # Code start addresses + map
-        code_starts: Set[int] = {ins.address for ins in instructions}
-        code_map: Dict[int, Instruction] = {ins.address: ins for ins in instructions}
-        addr_to_idx: Dict[int, int] = {ins.address: i for i, ins in enumerate(instructions)}
+        #code_starts: Set[int] = {ins.address for ins in instructions}
+        #code_map: Dict[int, Instruction] = {ins.address: ins for ins in instructions}
+        #addr_to_idx: Dict[int, int] = {ins.address: i for i, ins in enumerate(instructions)}
         code_bytes: Set[int] = set()
-        for ins in instructions:
+        for addr, ins in instructions.items():
             for off in range(ins.size):
-                code_bytes.add((ins.address + off) & 0xFFFF)
+                code_bytes.add((addr + off) & 0xFFFF)
 
         # Function starts/callers from core
         reset_addr = self._try_get_reset_vector(rom_image)
         functions: Dict[int, FunctionInfo] = extract_functions_and_callers(
-            instructions, reset_addr, self.curr_rom_service.config)
+            instructions, reset_addr, self.curr_rom_service.rom_cfg)
 
         # Create display elements
         display_items: List[DisplayItem] = []
@@ -456,8 +454,8 @@ class AsmViewerWidget(QWidget):
                 display_items.append(DisplayItem(ItemType.FUNC_LABEL, addr, 0, f"{functions[addr].name}:", b""))
 
             # Code?
-            if addr in code_starts:
-                ins = code_map[addr]
+            if addr in instructions:
+                ins = instructions[addr]
                 text = self._render_code_line(ins, functions)
                 row = len(display_items)
                 display_items.append(DisplayItem(ItemType.CODE, addr, ins.size, text, ins.bytes, instr=ins))
@@ -475,7 +473,7 @@ class AsmViewerWidget(QWidget):
             length = 0
             while length < max_len:
                 cur = start + length
-                if cur in code_starts or cur in functions or cur >= end_addr:
+                if cur in instructions or cur in functions or cur >= end_addr:
                     break
                 length += 1
 
@@ -495,7 +493,7 @@ class AsmViewerWidget(QWidget):
                 highlight_addrs.add(ba)
             addr += length
 
-        return display_items, functions, highlight_addrs, addr_to_idx, code_bytes
+        return display_items, functions, highlight_addrs, code_bytes
 
     # ---- Rendering ----
     def _render_code_line(self, ins: Instruction, functions: Dict[int, FunctionInfo]) -> str:
@@ -511,12 +509,12 @@ class AsmViewerWidget(QWidget):
 
         # For 16-bit operands it's possible that we have a direct mapping of the variable
         if ins.is_operand_16bit and ins.target_value is not None:
-            ref_var = self.curr_rom_service.config.get_by_address(ins.target_value)
+            ref_var = self.curr_rom_service.rom_cfg.get_by_address(ins.target_value)
             if ref_var is not None and ref_var.address is not None:
                 if ref_var.type == RomVarType.STRING and ref_var.size is not None:
                     target = f" \"{self.rom_image.rom[ref_var.address:ref_var.address + ref_var.size].decode('utf-8', errors='ignore')}\""
                 elif ref_var.type == RomVarType.VARIABLE or ref_var.type == RomVarType.PORT:
-                    current_var = self.curr_rom_service.config.get_by_address(ref_var.address)
+                    current_var = self.curr_rom_service.rom_cfg.get_by_address(ref_var.address)
                     if current_var is not None:
                         target = f" ({current_var.name})"
 
@@ -571,13 +569,13 @@ class AsmViewerWidget(QWidget):
         self.fn_table.setColumnWidth(1, 80)   # Address
 
         # Refresh call tree
-        self.fn_tree_model = FunctionCallTreeModel(self.curr_rom_service.call_tree, self.functions)
+        self.fn_tree_model = FunctionCallTreeModel(self.curr_rom_service.rom_cfg.call_tree, self.functions)
         self.fn_tree_view.setModel(self.fn_tree_model)
         self.fn_tree_view.setColumnWidth(0, 160)
         self.fn_tree_view.setColumnWidth(1, 80)   # Address
 
         # Refresh variables
-        self.var_view_model = VariableTableModel(self.curr_rom_service.config.all_vars(), self)
+        self.var_view_model = VariableTableModel(self.curr_rom_service.rom_cfg.all_vars(), self)
         self.var_view.setModel(self.var_view_model)
         self.var_view.setColumnWidth(0, 160)
         self.var_view.setColumnWidth(1, 80)   # Address

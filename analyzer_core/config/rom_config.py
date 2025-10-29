@@ -1,9 +1,11 @@
 from enum import Enum, auto
 from dataclasses import dataclass
-from typing import Optional, Union
+from typing import List, Optional, Union
 
+from analyzer_core.analyze.repo import PatternRepository
 from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo
+from analyzer_core.disasm.insn_model import Instruction
 
 class RomConfigError(Exception):
     pass
@@ -41,6 +43,14 @@ class RomConfig:
         self._by_address: dict[int, RomVarDefinition] = {}
 
         self._rom_vars: dict[str, RomVarDefinition] = {}
+
+        # Instructions and call tree being collected by disassembler
+        self.instructions: dict[int, Instruction] = {}
+        self.call_tree: dict = {}
+        self.action_addresses: set[int] = set()
+
+        # Pattern for detection
+        self.pattern_repo: PatternRepository
 
         # Devices that actually exist on the cassette
         self.selectable_devices: list[CurrentSelectedDevice] = []
@@ -126,7 +136,7 @@ class RomConfig:
 
 
     def all_items(self):
-        return self._by_name.items()
+        return self._by_name
 
     # Optional: Iteration nach Typ
     def all_ports(self):

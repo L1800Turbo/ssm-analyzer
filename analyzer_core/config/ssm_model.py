@@ -69,6 +69,8 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
     ssm_cmd_protocols: Optional[list[tuple[int,int]]] = None
     request_romid_cmd: Optional[tuple[int,int,int,int]] = None
 
+    entry_ptr_address: Optional[int] = None
+
     # Values defined in fn_attach_cu_specific_addresses
     # These values depend in most cases only on the ECU type, but rarely also on the RomID
     max_length_menuitems:Optional[int] = None
@@ -83,6 +85,12 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
     romid_lower_label_pointer:Optional[int] = None
 
     final_menuitems_pointer:Optional[int] = None
+
+    # To be determined by YEAR action
+    ssm_year_model_str_1: Optional[str] = None
+    ssm_year_model_str_2: Optional[str] = None
+
+    # TODO Year in ausgewertet dazu
 
     master_table: Optional["MasterTableInfo"] = None
 

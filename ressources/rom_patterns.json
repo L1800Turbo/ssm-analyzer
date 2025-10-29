@@ -18,8 +18,14 @@
       "pattern": [
         { "mnemonic": "ldx", "op_str": "REF{str_select_system}" },
         { "mnemonic": "jsr", "op_str": "FN{set_upper_screen_buffer}" },
+        { "mnemonic": "jsr", "op_str": "FN{print_upper_screen}" },
+        { "mnemonic": "ldaa", "op_str": "VAR{current_selected_device}" },
+        { "max_skip": 13, "min_skip": [10] },
+        { "mnemonic": "mul" },
+        { "mnemonic": "abx" },
+        { "mnemonic": "jsr", "op_str": "FN{set_lower_screen_buffer}" },
         { "mnemonic": "jsr" },
-        { "mnemonic": "ldaa", "op_str": "VAR{current_selected_device}" }
+        { "mnemonic": "jsr", "op_str": "FN{print_lower_screen}" }
       ],
       "description": "SELECT SYSTEM Function"
     },
@@ -333,10 +339,40 @@
         { "mnemonic": "tst", "op_str": "VAR{romid_A_is_0x20}" },
         { "mnemonic": "beq" },
         { "mnemonic": "jsr", "op_str": "FN{long_table_baro_mani_comms}" },
-        { "mnemonic": "ldaa", "op_str": "VAR{current_mastertable_index}" },
+        { "mnemonic": "ldaa", "op_str": "VAR{current_master_table_index}" },
         { "mnemonic": "ldab"}
       ],
       "description": "IMPREZA96 @0x903C: Load information from the Mastertable list pointer into RAM values that'll be used in the Action fn later on"
+    },
+    {
+      "name": "read_from_ecu",
+      "pattern": [
+        { "mnemonic": "clr" },
+        { "mnemonic": "sei" },
+        { "mnemonic": "ldd", "op_str": "0xFFFF" },
+        { "mnemonic": "std", "op_str": "REF{ssm_rx_byte_0}" },
+        { "mnemonic": "ldx", "op_str": "VAR{current_ecu_address}" },
+        { "mnemonic": "cpx", "op_str": "0xFFFF" },
+        { "mnemonic": "bne" },
+        { "mnemonic": "com", "op_str": "REF{ssm_rx_byte_0}" },
+        { "mnemonic": "com", "op_str": "REF{ssm_rx_byte_1}" }
+      ]
+    }
+  ],
+  "action_table_pointer_pattern":
+  [
+    {
+      "name": "action_year",
+      "pattern": [
+        { "mnemonic": "staa", "op_str": "VAR{current_scaling_index}" },
+        { "mnemonic": "stab", "op_str": "VAR{current_ecu_address_index}" },
+        { "mnemonic": "ldd",	 "op_str": "0x012C" },
+        { "mnemonic": "jsr",  "op_str": "REF{wait_ms}" },
+        { "mnemonic": "tst",  "op_str": "REF{romid_EGi_Axxx_scheme}" }, 
+        { "mnemonic": "beq" },
+        { "mnemonic": "ldx" }
+      ],
+      "description": "IMPREZA96 @0x95E9: Action for YEAR function, print model year and ECU version to screen"
     }
   ],
   "strings": {

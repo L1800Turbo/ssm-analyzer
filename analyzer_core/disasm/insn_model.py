@@ -26,7 +26,8 @@ class Instruction:
     def __repr__(self):
         return (f"<Instruction addr=0x{self.address:04X} size={self.size} "
                 f"mnemonic='{self.mnemonic}' op_str='{self.op_str}' "
-                f"target_address={self.target_value}>")
+                f"target_type={self.target_type} "
+                f"target_value_raw={self.target_value}>")
 
     @property
     def is_function_call(self) -> bool:

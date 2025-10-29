@@ -18,26 +18,35 @@ class SignatureNotFound(Exception):
     pass
 
 class PatternDetector:
-    def __init__(self, repo: PatternRepository, rom_cfg: RomConfig):
+    def __init__(self, rom_cfg: RomConfig):
         self.logger = logging.getLogger(__name__)
 
-        self.repo = repo
+        self.repo = rom_cfg.pattern_repo
         #self.fn_patterns = repo.get_fn_patterns()
         self.rom_cfg = rom_cfg
 
         self.found_signatures = set()
 
-    def detect_patterns(self, instructions: List[Instruction], pattern_group:str):
+    def detect_patterns(self, instructions: dict[int, Instruction], pattern_group:str):
         signatures = self.repo.get_patterns(pattern_group)
         #self.fn_patterns
 
         # Get all patterns as missing to be detected one after another
-        missing = [step["name"] for step in signatures]
+        #missing = [step["name"] for step in signatures]
+
+        # Get all patterns not existing in rom_cfg as missing to be detected one after another
+        missing = [step["name"] for step in signatures if "name" in step and step["name"] not in self.rom_cfg.all_items()]
+
+
+        this_found_signatures:dict[str, int] = {}
 
         # Loop while missing patterns exist
         while missing:
             for sig in signatures:
                 name = sig["name"]
+
+                #if self.rom_cfg.get_by_name(name) is not None:
+                #    continue
 
                 if name in self.found_signatures:
                     continue
@@ -59,8 +68,9 @@ class PatternDetector:
                     raise SignatureError(f"Signature {name} doesn't contain a pattern")
                 pattern = sig["pattern"]
 
-                # We need a copy to pop elements from and not to disturb the original by-refence list
-                current_instructions = list(instructions)
+                # Build an ordered list view from the instructions dict (do not modify original)
+                ordered_addrs = sorted(instructions.keys())
+                instr_list = [instructions[a] for a in ordered_addrs]
 
                 # When using a start_address, we skip until that point
                 start_address = sig.get("start_address", None)
@@ -79,16 +89,20 @@ class PatternDetector:
                     elif type(start_address) != int:
                         raise SignatureError(f"Unknown start_address for {name}")
                     
-                    while current_instructions[0].address < start_address:
-                        current_instructions.pop(0)
-                        if len(current_instructions) == 0:
-                            raise SignatureNotFound(f"Start address 0x{start_address:04X} for {name} is invalid.")
+                    idx = 0
+                    while idx < len(instr_list) and instr_list[idx].address < start_address:
+                        idx += 1
+                    if idx >= len(instr_list):
+                        raise SignatureNotFound(f"Start address 0x{start_address:04X} for {name} is invalid.")
+                else:
+                    idx = 0
 
-
-                pattern_match = self.__detect_current_pattern(name, current_instructions, pattern)
+                # pass a sliced view to the matcher (simulates popped/skipped prefix)
+                pattern_match = self.__detect_current_pattern(name, instr_list[idx:], pattern)
 
                 if pattern_match:
                     self.logger.debug(f"Found {name} function at 0x{pattern_match['funcs'][name]:02X}")
+                    this_found_signatures[name] = pattern_match['funcs'][name]
 
                     for varname, addr in pattern_match.get("vars", {}).items():
                         self.rom_cfg.add_var_address(varname, addr)
@@ -114,6 +128,7 @@ class PatternDetector:
                     #raise SignatureNotFound(f"Pattern {name} not found")
                     missing.remove(name)
                     self.logger.error(f"Pattern {name} not found")
+        return this_found_signatures
 
     def __detect_current_pattern(self, name: str, instructions: List[Instruction], pattern: List[Dict[str, Any]]) -> Optional[Dict[str, Dict[str, int]]]:
         # Inspect current pattern
@@ -133,7 +148,7 @@ class PatternDetector:
             # if cur_instr.address < 0xBD84:
             #     instr_idx += 1
             #     continue
-            if cur_instr.address == 0x88DB:
+            if cur_instr.address == 0xA9AB:
                 pass
 
             # TODO: Er muss noch die passende Startadresse einlesen können, um nicht bei 0 anzufangen!

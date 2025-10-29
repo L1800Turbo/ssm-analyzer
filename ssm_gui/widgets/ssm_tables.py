@@ -119,7 +119,7 @@ class SsmTablesWidget(QWidget):
         device = self.device_select.currentData()
 
         for rom_path, ecu in self.rom_services.items():
-            self.romid_table = ecu.config.romid_tables.get(device)
+            self.romid_table = ecu.rom_cfg.romid_tables.get(device)
 
             if self.romid_table:
                 self.romid_table_model.setRomIdTable(self.romid_table)

@@ -1,5 +1,7 @@
+from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.config.ssm_model import MasterTableEntry, MasterTableInfo, RomEmulationError, RomIdTableEntry_512kb
+from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.ssm.master_table_entry_analyzer import MasterTableEntryAnalyzer
 
@@ -10,8 +12,8 @@ class MasterTableAnalyzer:
     '''
     
     def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, romid_entry : RomIdTableEntry_512kb):
-        self.__emulator = emulator
-        self.__rom_cfg = rom_cfg
+        self.emulator = emulator
+        self.rom_cfg = rom_cfg
         self.__romid_entry = romid_entry
 
 
@@ -35,7 +37,10 @@ class MasterTableAnalyzer:
         entry_size = MasterTableEntry.entry_size
         
         for i in range(menuitems-1):
-            current_mt_index = self.__emulator.mem.read(possible_items_ptr + i)
+            current_mt_index = self.emulator.mem.read(possible_items_ptr + i)
+
+            # And store current index in RAM for other functions to use
+            self.emulator.write8(self.rom_cfg.address_by_name("current_master_table_index"), current_mt_index)
 
             # On FF we are finished with possible entries
             if current_mt_index == 0xFF:
@@ -43,11 +48,13 @@ class MasterTableAnalyzer:
             elif current_mt_index > 0xFF:
                 raise RomEmulationError(f"Invalid master table index: {current_mt_index:02X}")
 
-            mt_entry_bytes = self.__emulator.mem.read_bytes(master_table_ptr + current_mt_index * entry_size, entry_size)
+            mt_entry_bytes = self.emulator.mem.read_bytes(master_table_ptr + current_mt_index * entry_size, entry_size)
 
             entry = MasterTableEntry.from_bytes(mt_entry_bytes)
             self.__romid_entry.master_table.entries.append(entry)
 
             # TODO so sauber? Nicht das Zeug hier alles da rein?
-            entry_analyzer = MasterTableEntryAnalyzer(self.__emulator, self.__rom_cfg, self.__romid_entry, entry)
+            entry_analyzer = MasterTableEntryAnalyzer(self.emulator, self.rom_cfg, self.__romid_entry, entry)
+        
+    
 

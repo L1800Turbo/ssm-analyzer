@@ -12,7 +12,7 @@ class FunctionInfo:
 	callers: Set[int]
 
 def extract_functions_and_callers(
-	instructions: List[Instruction],
+	instructions: dict[int, Instruction],
 	reset_addr: Optional[int] = None,
 	config: Optional[RomConfig] = None
 ) -> Dict[int, FunctionInfo]:
@@ -37,19 +37,16 @@ def extract_functions_and_callers(
 		fi = ensure_fn(reset_addr)
 		fi.name = "fn_reset"
 
-	# Function starts: Reset + all function call targets
-	for ins in instructions:
-		if ins.is_function_call and ins.target_value is not None:
-			ensure_fn(ins.target_value & 0xFFFF)
-
 	# Caller detection (last function start <= instruction address)
 	sorted_fn_starts = sorted(functions.keys())
 	current_fn_start: Optional[int] = None
 	fn_iter = iter(sorted_fn_starts)
 	next_fn = next(fn_iter, None)
 
-	for ins in sorted(instructions, key=lambda x: x.address):
-		if ins.address in functions:
+
+	# Function starts: Reset + all function call targets
+	for addr, ins in instructions.items():
+		if addr in functions:
 			current_fn_start = ins.address
 		if ins.is_function_call and ins.target_value is not None:
 			callee = ensure_fn(ins.target_value & 0xFFFF)

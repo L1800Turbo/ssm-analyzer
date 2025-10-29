@@ -1,15 +1,17 @@
 # analyzer_core/emu/emulator_6303.py
 from __future__ import annotations
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Callable, Dict
 import logging
 
     # Capstone-Import entfernt, stattdessen Disassembler/Instruction
 
 from analyzer_core.config.memory_map import MemoryMap, MemoryRegion, RegionKind
+from analyzer_core.emu.asm_html_logger import AsmHtmlLogger
+from analyzer_core.emu.memory_manager import MemoryManager
 from analyzer_core.data.rom_image import RomImage
 from analyzer_core.disasm.insn_model import Instruction
-from analyzer_core.emu.memory_manager import MemoryManager
 from analyzer_core.emu.hooks import HookManager
 from analyzer_core.emu.tracing import ExecutionTracer, MemAccess
 from analyzer_core.config.rom_config import RomConfig
@@ -53,7 +55,7 @@ class Emulator6303:
         
         self.logger = logging.getLogger(__name__)
 
-        self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom)
+        self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom) # TODO Das noch raus, wird aber aus den Mocks genommen, mit debugger ugcken, wie man das weg bekommt
 
         self.memory_map = memory_map if memory_map else MemoryMap()
         self.hooks = hooks or HookManager()
@@ -68,6 +70,12 @@ class Emulator6303:
         self.SP = initial_sp if initial_sp is not None else self.rom_config.get_stack_pointer()
         self.PC = start_pc & 0xFFFF
         self.flags = CPUFlags()
+
+        try:
+            log_path = Path("logs/asm_trace.html")
+            self.asm_logger = AsmHtmlLogger(log_path, append=True)
+        except Exception:
+            self.asm_logger = None
 
 
     # --- Helpers: memory/registers/stack ---
@@ -242,20 +250,44 @@ class Emulator6303:
 
 
     # --- Step/Execute ---
-    def _fetch_instruction(self) -> Optional[Instruction]:
-        return self.dasm.disassemble_step(self.PC)
+    def get_current_instruction(self) -> Optional[Instruction]:
+        return self.rom_config.instructions.get(self.PC)
+        #for instr in self.rom_config.instructions:
+        #    if instr.address == self.PC:
+        #        return instr
+        
+        #raise EmulationError(f"Couldn't find decompiled instruction at address 0x{self.PC:04X}")
+        #return self.dasm.disassemble_step(self.PC)
+
+        # Alternative approach: disassemble everything we get to
+    
+    def mock_return(self) -> None:
+        ret_addr = self.pull16()
+        self.PC = ret_addr & 0xFFFF
 
 
     def step(self) -> Optional[MemAccess]:
+        # run pre-hooks (they may set memory/registers but must not consume the instruction)
+        try:
+            self.hooks.run_pre_hooks(self.PC, self)
+        except Exception as e:
+            raise EmulationError(f"Pre-hook at 0x{self.PC:04X} failed: {e}")
+        
+        if len(self.hooks.get_post_hooks(self.PC)) > 0:
+            self.hooks.waiting_for_post_hook = True
+
+
         # Check if this function is checked to be mocked
         mock_fn = self.hooks.get_mock(self.PC)
         if mock_fn:
             mock_fn(self)
             return
     
-        instr = self._fetch_instruction()
+        instr = self.get_current_instruction()
         if not instr:
-            raise EmulationError(f"Decode error at 0x{self.PC:04X}")
+            raise EmulationError(f"No instruction at 0x{self.PC:04X}")
+        
+        # TODO Debug-Nachricht bauen bei Funktionsaufruf, wenn unbekannte Funktion aufgerufen wird?
         
         try:
             func = getattr(self, instr.mnemonic)
@@ -263,7 +295,22 @@ class Emulator6303:
             asm_step: MemAccess = func(instr)
 
             # TODO hier die steps auswerten?
-            #print(asm_step)
+            # TODO in eigene Log schmeißen direkt
+
+            if self.asm_logger is not None:
+                self.asm_logger.log(asm_step)
+            else:
+                print(asm_step)
+
+            # run post-hooks with MemAccess (optional observers / modifications)
+            # TODO Völliger Müll so. Soll er doch am Ende der Funktion machne!
+
+            if instr.is_return and self.hooks.waiting_for_post_hook:
+                self.hooks.waiting_for_post_hook = False
+                try:
+                    self.hooks.run_post_hooks(instr.address, self, asm_step)
+                except Exception as e:
+                    raise EmulationError(f"Post-hook at 0x{instr.address:04X} failed: {e}")
 
             return asm_step
         
@@ -273,19 +320,21 @@ class Emulator6303:
 
 
 
-
-    # --- High-level run helpers (wie v2: run_function_end) ---
-    def run_function_end(self, max_steps: int = 100000, clear_mocks_after: bool = True) -> Optional[MemAccess]:
+    def run_function_end(self, max_steps: int = 100000, abort_pc:int|None = None) -> Optional[MemAccess]: #clear_mocks_after: bool = True
         """
-        Run from the current PC until a RTS/RTI is reached.
+        Run from the current PC into functions and back until a RTS/RTI from the current level is reached.
         """
 
-        #depth = 0
+        # If we want to run until this level's rts/rti or abort at specific PC
+        if abort_pc is not None:
+            sentinel = abort_pc & 0xFFFF
+        else:
+            sentinel = 0xFFFF
 
-        sentinel = 0xFFFF
+            # Guarantee unique sentinel
+            self.push16(sentinel)
+
         last_step = None
-        # Push Sentinel (=Return-Adresse), damit ein Rücksprung garantiert terminiert
-        self.push16(sentinel)
         steps = 0
         while steps < max_steps:
             if self.PC == sentinel:
@@ -293,13 +342,6 @@ class Emulator6303:
 
             last_step = self.step()
             steps += 1
-
-            # if last_step and last_step.instr.is_function_call:
-            #     depth += 1
-            # elif last_step and last_step.instr.is_return:
-            #     if depth == 0:
-            #         break
-            #     depth -= 1
 
         # if clear_mocks_after:
         #     self.clear_mocks()
@@ -1077,7 +1119,7 @@ class Emulator6303:
         return MemAccess(
             instr=instr,
             target_addr=None,
-            var=self.rom_config.get_by_address(self.PC),
+            var=self.rom_config.get_by_address(old_PC),
             value=None,
             rw='X',
             by=self.PC,
@@ -1096,7 +1138,7 @@ class Emulator6303:
         return MemAccess(
             instr=instr,
             target_addr=None,
-            var=self.rom_config.get_by_address(self.PC),
+            var=self.rom_config.get_by_address(old_PC),
             value=None,
             rw='X',
             by=self.PC,
@@ -1117,7 +1159,7 @@ class Emulator6303:
         return MemAccess(
             instr=instr,
             target_addr=None,
-            var=self.rom_config.get_by_address(self.PC),
+            var=self.rom_config.get_by_address(old_PC),
             value=None,
             rw='X',
             by=self.PC,
@@ -1136,7 +1178,7 @@ class Emulator6303:
         return MemAccess(
             instr=instr,
             target_addr=None,
-            var=self.rom_config.get_by_address(self.PC),
+            var=self.rom_config.get_by_address(old_PC),
             value=None,
             rw='X',
             by=self.PC,
@@ -1156,7 +1198,27 @@ class Emulator6303:
         return MemAccess(
             instr=instr,
             target_addr=None,
-            var=self.rom_config.get_by_address(self.PC),
+            var=self.rom_config.get_by_address(old_PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def bmi(self, instr: Instruction) -> MemAccess:
+        """Branch if Minus (N == 1)"""
+        old_PC = self.PC
+
+        if self.flags.N == 1:
+            self.PC = instr.target_value  # type: ignore
+        else:
+            self.PC += instr.size
+
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=self.rom_config.get_by_address(old_PC),
             value=None,
             rw='X',
             by=self.PC,
@@ -1540,7 +1602,7 @@ class Emulator6303:
         return MemAccess(
             instr=instr,
             target_addr=None,
-            var=self.rom_config.get_by_address(self.PC),
+            var=self.rom_config.get_by_address(old_PC),
             value=None,
             rw='X',
             by=self.PC,
@@ -1549,22 +1611,38 @@ class Emulator6303:
 
     @operand_needed
     def jsr(self, instr: Instruction) -> MemAccess:
+        old_PC = self.PC
+        ma = self.__read_value16(instr)
+
+        if instr.target_value is None:
+            raise ValueError("Couldn't determine jumping address for jsr.")
+
+        # Push return address onto stack
         ret = (self.PC + instr.size)
         if ret > 0xFFFF:
             raise ValueError("Jumping to instruction behind ROM!")
-
         self.push16(ret)
 
-        #self._call_stack.append((self.PC, addr))
-        old_PC = self.PC
+        self.PC = ma.target_addr
+        ma.next_instr_addr = self.PC
 
-        if not instr.target_value:
-            raise ValueError("Couldn't determine jumping address for jsr.")
-        self.PC:int = instr.target_value
+        return ma
+
+        if instr.target_type == OperandType.DIRECT:
+            self.PC = instr.target_value
+        # elif instr.target_type == OperandType.IMMEDIATE:
+        #     addr = None
+        #     val = instr.target_value & 0xFFFF
+        elif instr.target_type == OperandType.INDIRECT:
+            addr = (self.X + instr.target_value) & 0xFFFF
+            self.PC = self.read16(addr)
+
+        
+
         return MemAccess(
             instr=instr,
-            target_addr=None,
-            var=self.rom_config.get_by_address(self.PC),
+            target_addr=self.PC,
+            var=self.rom_config.get_by_address(old_PC), # TODO in den adneren funktionen auch noch anpassen, oder=?
             value=None,
             rw='X',
             by=self.PC,

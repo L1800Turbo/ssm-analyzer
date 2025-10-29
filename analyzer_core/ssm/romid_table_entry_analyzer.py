@@ -3,7 +3,8 @@ import logging
 
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.config.rom_config import RomConfig, RomConfigError
-from analyzer_core.config.ssm_model import RomEmulationError, RomIdTableEntry_512kb, CurrentSelectedDevice
+from analyzer_core.config.ssm_model import RomEmulationError, RomIdTableEntry_512kb, CurrentSelectedDevice, RomIdTableInfo
+from analyzer_core.emu.memory_manager import MemoryManager
 
 class RomIdEntryAnalyzer:
     """
@@ -11,11 +12,14 @@ class RomIdEntryAnalyzer:
     Erwartet einen bereits initialisierten Emulator (mit ggf. gesetztem mapped region).
     """
 
-    def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, entry: RomIdTableEntry_512kb):
+    def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, romid_table: RomIdTableInfo, entry: RomIdTableEntry_512kb):
+        self.logger = logging.getLogger(__name__)
+
+        self.romid_table = romid_table
         self.entry = entry
         self.emulator = emulator
         self.rom_cfg = rom_cfg
-        self.logger = logging.getLogger(__name__)
+        
 
     def prepare_for_device(self, device: CurrentSelectedDevice) -> None:
         """Setzt das aktuelle Device-Byte in RAM, damit Funktionen sich richtig verhalten."""
@@ -28,7 +32,7 @@ class RomIdEntryAnalyzer:
         Entspricht dem bisherigen __execute_get_cmd_com_types.
         """
         rom_cfg = self.rom_cfg
-        emu = self.emulator
+        self.emulator = self.emulator
 
         attach_ssm_comm_type = rom_cfg.address_by_name("attach_ssm_comm_type")
         ssm_receive_status = rom_cfg.address_by_name('ssm_receive_status')
@@ -38,11 +42,11 @@ class RomIdEntryAnalyzer:
 
         collected: List[Tuple[int,int]] = []
 
-        emu.set_pc(attach_ssm_comm_type)
+        self.emulator.set_pc(attach_ssm_comm_type)
 
-        def hook_ssm_check_receive_status(addr:int, val:int):
+        def hook_ssm_check_receive_status(addr:int, val:int, mem: MemoryManager):
             # Simulate error by clearing ssm_receive_status
-            emu.write8(ssm_receive_status, 0)
+            mem.write(self.rom_cfg.address_by_name('ssm_receive_status'), 0)
 
         # Mock the hardware relevant part executed in set_communication_protocol
         # Only take the current command and the protocol value
@@ -69,12 +73,12 @@ class RomIdEntryAnalyzer:
             else:
                 raise RuntimeError("Couldn't fetch instruction in mock_wait_ms")
 
-        emu.hooks.add_read_hook(ssm_receive_status, hook_ssm_check_receive_status)
-        emu.write8(no_success_on_first_connection_flag, 0)
-        emu.hooks.mock_function(rom_cfg.address_by_name("set_communication_protocol"), mock_set_communication_protocol)
-        emu.hooks.mock_function(rom_cfg.address_by_name("wait_ms"), mock_wait_ms)
+        self.emulator.hooks.add_read_hook(ssm_receive_status, hook_ssm_check_receive_status)
+        self.emulator.write8(no_success_on_first_connection_flag, 0)
+        self.emulator.hooks.mock_function(rom_cfg.address_by_name("set_communication_protocol"), mock_set_communication_protocol)
+        self.emulator.hooks.mock_function(rom_cfg.address_by_name("wait_ms"), mock_wait_ms)
 
-        emu.run_function_end()
+        self.emulator.run_function_end()
 
         #print(f"RomID {romid.romid0:02X} {romid.romid1:02X} {romid.romid2:02X} Command Protocols: {[(hex(cmd), hex(proto)) for cmd, proto in romid_cmd_protocols]}")
 
@@ -91,28 +95,27 @@ class RomIdEntryAnalyzer:
         Entspricht __execute_request_romid_save_romid (vereinfachte Übersetzung).
         """
         rom_cfg = self.rom_cfg
-        emu = self.emulator
         self.current_request_romid_cmd = (0,0,0,0)
 
         self.logger.debug(f"Running request_romid_save_romid function for {self.entry.romid0:02X} {self.entry.romid1:02X} {self.entry.romid2:02X}...")
 
-        def hook_get_ssm_receive_status(addr:int, val:int):
+        def hook_get_ssm_receive_status(addr:int, val:int, mem: MemoryManager):
             #Current RomID request command we received
             # print(f"{emulator.read8(self.rom_config.address_by_name('ssm_tx_byte_0')):02X} "
             #       f"{emulator.read8(self.rom_config.address_by_name('ssm_tx_byte_1')):02X} "
             #       f"{emulator.read8(self.rom_config.address_by_name('ssm_tx_byte_2')):02X}")
 
             self.current_request_romid_cmd = (
-                emu.read8(rom_cfg.address_by_name('ssm_tx_byte_0')),
-                emu.read8(rom_cfg.address_by_name('ssm_tx_byte_1')),
-                emu.read8(rom_cfg.address_by_name('ssm_tx_byte_2')),
-                emu.read8(rom_cfg.address_by_name('ssm_tx_byte_3'))
+                mem.read(self.rom_cfg.address_by_name('ssm_tx_byte_0')),
+                mem.read(self.rom_cfg.address_by_name('ssm_tx_byte_1')),
+                mem.read(self.rom_cfg.address_by_name('ssm_tx_byte_2')),
+                mem.read(self.rom_cfg.address_by_name('ssm_tx_byte_3'))
             )
 
             # Simulate the current RomID as "correct answer" if we're asked
-            emu.write8(rom_cfg.address_by_name('ssm_rx_byte_0'), self.entry.romid0)
-            emu.write8(rom_cfg.address_by_name('ssm_rx_byte_1'), self.entry.romid1)
-            emu.write8(rom_cfg.address_by_name('ssm_rx_byte_2'), self.entry.romid2)
+            mem.write(self.rom_cfg.address_by_name('ssm_rx_byte_0'), self.entry.romid0)
+            mem.write(self.rom_cfg.address_by_name('ssm_rx_byte_1'), self.entry.romid1)
+            mem.write(self.rom_cfg.address_by_name('ssm_rx_byte_2'), self.entry.romid2)
 
         # We don't really want to search the RomID, we already know it. So just return.
         def mock_search_matching_romid(em: Emulator6303):
@@ -124,16 +127,16 @@ class RomIdEntryAnalyzer:
 
             # search_matching_romid defines if it's an Axx RomID, set it manually
             if current_device == CurrentSelectedDevice.EGI and (self.entry.romid0 & 0xA0) == 0xA0:
-                emu.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x1)
+                self.emulator.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x1)
             else:
-                emu.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x0)
+                self.emulator.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x0)
 
             # AT Axx RomIDs don't exist before '97
             if rom_cfg.check_for_address('romid_AT_Axxx_scheme'):
                 if current_device == CurrentSelectedDevice.AT and (self.entry.romid0 >> 8) == 0xA:
-                    emu.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x1)
+                    self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x1)
                 else:
-                    emu.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x0)
+                    self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x0)
 
 
         # Get the right funktion pointer
@@ -150,8 +153,8 @@ class RomIdEntryAnalyzer:
             # Set the current SSM command and protocol in memory before running the function
             current_ssm_cmd = self.rom_cfg.address_by_name("current_ssm_cmd")
             current_ssm_protocol_version = self.rom_cfg.address_by_name("current_ssm_protocol_version")
-            emu.write8(current_ssm_cmd, ssm_cmd)
-            emu.write8(current_ssm_protocol_version, ssm_protocol)
+            self.emulator.write8(current_ssm_cmd, ssm_cmd)
+            self.emulator.write8(current_ssm_protocol_version, ssm_protocol)
 
             # Get the right funktion pointer
             try:
@@ -160,20 +163,20 @@ class RomIdEntryAnalyzer:
                 search_matching_romid_ptr = self.rom_cfg.address_by_name("search_matching_romid_97")   
 
             # Reset the PC to the start of the function
-            emu.set_pc(self.rom_cfg.address_by_name("request_romid_save_romid"))
+            self.emulator.set_pc(self.rom_cfg.address_by_name("request_romid_save_romid"))
 
             # Set hooks and mocks
-            emu.hooks.add_read_hook(self.rom_cfg.address_by_name('ssm_receive_status'), hook_get_ssm_receive_status)
-            emu.hooks.mock_function(search_matching_romid_ptr, mock_search_matching_romid)
+            self.emulator.hooks.add_read_hook(self.rom_cfg.address_by_name('ssm_receive_status'), hook_get_ssm_receive_status)
+            self.emulator.hooks.mock_function(search_matching_romid_ptr, mock_search_matching_romid)
 
-            emu.run_function_end()
+            self.emulator.run_function_end()
 
             # Vergleiche die 3 RomID-Teile und gebe eine Nachricht, wenn sie nicht übereinstimmen
             romid_parts = (self.entry.romid0, self.entry.romid1, self.entry.romid2)
             emulator_parts = (
-                emu.read8(self.rom_cfg.address_by_name('romid_0')),
-                emu.read8(self.rom_cfg.address_by_name('romid_1')),
-                emu.read8(self.rom_cfg.address_by_name('romid_2'))
+                self.emulator.read8(self.rom_cfg.address_by_name('romid_0')),
+                self.emulator.read8(self.rom_cfg.address_by_name('romid_1')),
+                self.emulator.read8(self.rom_cfg.address_by_name('romid_2'))
             )
 
             # We let the code run through, so that we get any hard coded RomIDs.
@@ -184,6 +187,22 @@ class RomIdEntryAnalyzer:
 
         self.entry.request_romid_cmd = self.current_request_romid_cmd
 
+    def execute_set_current_romid_values(self) -> None:
+        '''
+        Mostly to have a proper working emulator: Save vars from current RomID table into respective memory locations
+        '''
+
+        # Set PC to function "set_current_romid_values"
+        self.emulator.set_pc(self.rom_cfg.address_by_name("set_current_romid_values"))
+
+        # Get pointer for this RomID in RomID List
+        current_romid_line_pointer_addr = self.rom_cfg.address_by_name("current_romid_line_pointer")
+        
+        if self.entry.entry_ptr_address is None:
+            raise RomEmulationError(f"No pointer address defined for RomID {self.entry.print_romid_str()}")
+        self.emulator.write16(current_romid_line_pointer_addr, self.entry.entry_ptr_address)
+
+        self.emulator.run_function_end()
 
     def run_attach_cu_specific_addresses(self) -> None:
         """

@@ -33,6 +33,10 @@ class MemoryManager:
         if not region:
             raise ValueError(f"Address 0x{address:04X} not mapped to any region.")
         value = None
+
+        if self.hooks:
+            self.hooks.run_read_hooks(address, value, self)
+
         if region.kind == RegionKind.RAM:
             value = self.ram[address - region.start]
             # TODO Warnung, wenn die RAM-Stelle nicht initialisiert ist!
@@ -46,14 +50,17 @@ class MemoryManager:
             value = self.rom_image.rom[address + self.mapped_rom_offset]
         elif region.kind == RegionKind.IO:
             # IO access could be handled by hooks/mocks TODO macht das so überhaupt Sinn?
-            if self.hooks and self.hooks.run_read_hooks(address, 0):
+            if self.hooks and self.hooks.run_read_hooks(address, 0, self):
+                print("TODO: IO read hook handled value...")
                 value = 0  # Default/mock value
             else:
                 raise NotImplementedError("IO region access not implemented.")
         else:
             raise ValueError(f"Unknown region kind: {region.kind}")
-        if self.hooks:
-            self.hooks.run_read_hooks(address, value)
+        
+        #if address==0xD1:
+        #    print(f"Read from 0x{address:04X}: 0x{value:02X}")
+
         
         self.__read_memory.add(address)
         return value
@@ -62,22 +69,24 @@ class MemoryManager:
         region = self.memory_map.region_lookup(address)
         if not region:
             raise ValueError(f"Address 0x{address:04X} not mapped to any region.")
-        
-        if self.hooks:
-            self.hooks.run_write_hooks(address, value)
             
         if region.kind == RegionKind.RAM:
             self.ram[address - region.start] = value & 0xFF
         elif region.kind == RegionKind.IO:
             # IO access could be handled by hooks/mocks
+            # TODO noch anders
             if self.hooks:
-                self.hooks.run_write_hooks(address, value)
+                self.hooks.run_write_hooks(address, value, self)
             else:
                 raise NotImplementedError("IO region write not implemented.") # TODO Generell die Frage: IOs haben auch den RAM-Bereich?
         elif region.kind in (RegionKind.ROM, RegionKind.MAPPED_ROM):
             raise PermissionError(f"Cannot write to ROM or MAPPED_ROM region at 0x{address:04X}.")
         else:
             raise ValueError(f"Unknown region kind: {region.kind}")
+        
+        # If any write hooks, let them sabotage after the ROM code
+        if self.hooks:
+            self.hooks.run_write_hooks(address, value, self)
         
         self.__written_memory.add(address)
 
@@ -111,7 +120,7 @@ class MemoryManager:
 
     
 
-    def read_bytes(self, address: int, length: int, *, allow_cross_region: bool = False) -> bytes:
+    def read_bytes(self, address: int, length: int, *, allow_cross_region: bool = False, allow_hooks = True) -> bytes:
         """
         Liest 'length' Bytes ab 'address' effizient.
         - Nutzt Slicing statt Byte-für-Byte-Lesen.
@@ -150,11 +159,11 @@ class MemoryManager:
             data = bytes(out)
 
         # Hooks: einmal pro Block aufrufen (statt pro Byte)
-        if self.hooks:
+        if self.hooks and allow_hooks:
             # Falls dein Hook-System einen Block-Hook unterstützt, hier verwenden:
             # self.hooks.run_read_block_hooks(address, data)
             # Fallback: einmaliger Call, ansonsten bitte Hook-API erweitern
-            self.hooks.run_read_hooks(address, data[0] if data else 0)
+            self.hooks.run_read_hooks(address, data[0] if data else 0, self)
 
         # Trace aktualisieren (alle Adressen markieren)
         self.__read_memory.update(range(address, address + length))
@@ -192,7 +201,7 @@ class MemoryManager:
                 out_pos += seg_len
 
         if self.hooks:
-            self.hooks.run_read_hooks(address, out_buffer[0] if out_buffer else 0)
+            self.hooks.run_read_hooks(address, out_buffer[0] if out_buffer else 0, self)
 
         self.__read_memory.update(range(address, address + length))
         return length

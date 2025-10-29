@@ -4,6 +4,7 @@ from typing import List, Optional, Tuple
 from capstone import Cs, CsInsn, CS_ARCH_M680X, CS_MODE_M680X_6301
 from .insn_model import INSTRUCTION_GROUPS, Instruction
 
+# TODO Adressierungen nochmal mit Datenblat durchgehen
 class OperandType(Enum):
     IMMEDIATE = auto()
     DIRECT = auto()
@@ -47,7 +48,7 @@ class Disassembler630x:
             elif instr.op_str.endswith(", x"):
                 base = instr.op_str[:-3].strip()
                 if base.startswith("$"):
-                    return OperandType.DIRECT, int(base[1:], 16)
+                    return OperandType.INDIRECT, int(base[1:], 16)
                 return OperandType.INDIRECT, int(base)
             elif instr.op_str.isdigit():
                 return OperandType.INDIRECT, int(instr.op_str)
@@ -78,13 +79,13 @@ class Disassembler630x:
     
     def disassemble_reachable(self, 
                               start_addr: int, 
-                              instructions: Optional[List[Instruction]] = None,
+                              instructions: dict[int, Instruction],
                               call_tree: Optional[dict] = None
-                              ) -> Tuple[List[Instruction], dict]:
+                              ) -> Tuple[dict[int, Instruction], dict]:
         """
         Disassembliert nur tatsächlich erreichbaren Code ab Startadresse und JSR/JMP-Zielen (rekursiv).
         """
-        visited = set()
+        #visited = set()
         if instructions is None: instructions = []
         addr_to_instr_index = {}
         if call_tree is None: call_tree = {}
@@ -92,8 +93,8 @@ class Disassembler630x:
         worklist = [(start_addr, start_addr, call_tree)]
 
         # Skip addresses we detected in previous runs
-        for instr in instructions:
-            visited.add(instr.address)
+        #for instr in instructions:
+        #    visited.add(instr.address)
 
         while worklist:
             start, func_entry, tree = worklist.pop()
@@ -101,27 +102,28 @@ class Disassembler630x:
             func_entry &= 0xFFFF
 
             # If we've been there before
-            if start in visited:
+            if start in instructions:
                 continue
 
             cur = start
-            while cur not in visited and self.in_rom(cur):
+            while cur not in instructions and self.in_rom(cur):
                 instr = self.disassemble_step(cur)
                 if instr is None or instr.size <= 0:
-                    visited.add(cur)
+                    #visited.add(cur)
+                    # TODO None-Instruction als Dummy?
                     break
 
                 if any(((cur + off) & 0xFFFF) in code_bytes for off in range(instr.size)):
-                    visited.add(cur)
+                    #visited.add(cur)
                     break
 
                 addr_to_instr_index[instr.address] = len(instructions)
-                instructions.append(instr)
+                instructions[instr.address] = instr
 
                 for off in range(instr.size):
                     code_bytes.add((instr.address + off) & 0xFFFF)
 
-                visited.add(cur)
+                #visited.add(cur)
 
                 pc_next = (instr.address + instr.size) & 0xFFFF
 
@@ -164,14 +166,14 @@ class Disassembler630x:
                     break
                 cur = pc_next
 
-        instructions.sort(key=lambda x: x.address)
+        #instructions.sort(key=lambda x: x.address)
         return instructions, call_tree
     
     @classmethod
-    def find_stackpointer(cls, instructions: List[Instruction]) -> Optional[set|int]:
+    def find_stackpointer(cls, instructions: dict[int, Instruction]) -> Optional[set|int]:
         stack_pointers:set[int] = set()
         
-        for instr in instructions:
+        for addr, instr in instructions.items():
             if instr.mnemonic == "lds":
                 if instr.target_value is None:
                     raise RuntimeError("find_stackpointer: Found lds instruction, but no target value")
