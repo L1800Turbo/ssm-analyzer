@@ -302,9 +302,6 @@ class Emulator6303:
             else:
                 print(asm_step)
 
-            # run post-hooks with MemAccess (optional observers / modifications)
-            # TODO Völliger Müll so. Soll er doch am Ende der Funktion machne!
-
             if instr.is_return and self.hooks.waiting_for_post_hook:
                 self.hooks.waiting_for_post_hook = False
                 try:
@@ -340,11 +337,11 @@ class Emulator6303:
             if self.PC == sentinel:
                 break
 
+            if self.PC == 0xA9AB:
+                pass
+
             last_step = self.step()
             steps += 1
-
-        # if clear_mocks_after:
-        #     self.clear_mocks()
 
         if steps >= max_steps:
             raise TimeoutError("run_function_end: step limit exceeded")

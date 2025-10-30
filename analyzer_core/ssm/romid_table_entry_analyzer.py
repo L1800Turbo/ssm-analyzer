@@ -5,6 +5,7 @@ from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.config.rom_config import RomConfig, RomConfigError
 from analyzer_core.config.ssm_model import RomEmulationError, RomIdTableEntry_512kb, CurrentSelectedDevice, RomIdTableInfo
 from analyzer_core.emu.memory_manager import MemoryManager
+from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
 
 class RomIdEntryAnalyzer:
     """
@@ -44,7 +45,7 @@ class RomIdEntryAnalyzer:
 
         self.emulator.set_pc(attach_ssm_comm_type)
 
-        def hook_ssm_check_receive_status(addr:int, val:int, mem: MemoryManager):
+        def hook_ssm_check_receive_status_set_error(addr:int, val:int, mem: MemoryManager):
             # Simulate error by clearing ssm_receive_status
             mem.write(self.rom_cfg.address_by_name('ssm_receive_status'), 0)
 
@@ -64,19 +65,12 @@ class RomIdEntryAnalyzer:
             else:
                 raise RuntimeError("Couldn't fetch instruction in mock_set_communication_protocol")
 
-        # Simply ignore wait_ms function
-        # TODO Global machen
-        def mock_wait_ms(em: Emulator6303):
-            insn = em.dasm.disassemble_step(em.PC)
-            if insn:
-                em.rts(insn)
-            else:
-                raise RuntimeError("Couldn't fetch instruction in mock_wait_ms")
 
-        self.emulator.hooks.add_read_hook(ssm_receive_status, hook_ssm_check_receive_status)
+        self.emulator.hooks.add_read_hook(ssm_receive_status, hook_ssm_check_receive_status_set_error)
         self.emulator.write8(no_success_on_first_connection_flag, 0)
         self.emulator.hooks.mock_function(rom_cfg.address_by_name("set_communication_protocol"), mock_set_communication_protocol)
-        self.emulator.hooks.mock_function(rom_cfg.address_by_name("wait_ms"), mock_wait_ms)
+        
+        SsmEmuHelper.execute_default_mocks(self.rom_cfg, self.emulator)
 
         self.emulator.run_function_end()
 
@@ -105,6 +99,9 @@ class RomIdEntryAnalyzer:
             #       f"{emulator.read8(self.rom_config.address_by_name('ssm_tx_byte_1')):02X} "
             #       f"{emulator.read8(self.rom_config.address_by_name('ssm_tx_byte_2')):02X}")
 
+            # Also fake a receive status
+            mem.write(rom_cfg.address_by_name('ssm_receive_status'), 0x05)
+
             self.current_request_romid_cmd = (
                 mem.read(self.rom_cfg.address_by_name('ssm_tx_byte_0')),
                 mem.read(self.rom_cfg.address_by_name('ssm_tx_byte_1')),
@@ -119,11 +116,7 @@ class RomIdEntryAnalyzer:
 
         # We don't really want to search the RomID, we already know it. So just return.
         def mock_search_matching_romid(em: Emulator6303):
-            insn = em.dasm.disassemble_step(em.PC)
-            if not insn:
-                raise RuntimeError("Couldn't fetch mock_search_matching_romid_96 instruction")
-            em.clc(insn)
-            em.rts(insn)
+            em.mock_return()
 
             # search_matching_romid defines if it's an Axx RomID, set it manually
             if current_device == CurrentSelectedDevice.EGI and (self.entry.romid0 & 0xA0) == 0xA0:
@@ -137,6 +130,11 @@ class RomIdEntryAnalyzer:
                     self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x1)
                 else:
                     self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x0)
+            
+            # Copy RomID values, this usually also happens in search_matching_romid
+            self.emulator.write8(rom_cfg.address_by_name('romid_0_2'), self.entry.romid0)
+            self.emulator.write8(rom_cfg.address_by_name('romid_1_2'), self.entry.romid1)
+            self.emulator.write8(rom_cfg.address_by_name('romid_2_2'), self.entry.romid2)
 
 
         # Get the right funktion pointer
@@ -171,7 +169,7 @@ class RomIdEntryAnalyzer:
 
             self.emulator.run_function_end()
 
-            # Vergleiche die 3 RomID-Teile und gebe eine Nachricht, wenn sie nicht übereinstimmen
+            # Get static and emulated RomID parts for comparison
             romid_parts = (self.entry.romid0, self.entry.romid1, self.entry.romid2)
             emulator_parts = (
                 self.emulator.read8(self.rom_cfg.address_by_name('romid_0')),
@@ -186,6 +184,7 @@ class RomIdEntryAnalyzer:
                 self.entry.ssm_cmd_protocols.remove((ssm_cmd, ssm_protocol))
 
         self.entry.request_romid_cmd = self.current_request_romid_cmd
+
 
     def execute_set_current_romid_values(self) -> None:
         '''

@@ -89,7 +89,7 @@ class SsmFunctionEmulator:
         # Take every device posibility, find out if they actually exist
         for current_device in CurrentSelectedDevice:
             emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
-            self.add_default_hooks(emulator)
+            #self.add_default_hooks(emulator)
             emulator.set_pc(start_address)
 
             # Adjust offset for the current device
@@ -126,7 +126,7 @@ class SsmFunctionEmulator:
 
             # Let separate emulation run for each ECU
             emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
-            self.add_default_hooks(emulator)
+            #self.add_default_hooks(emulator)
             emulator.set_pc(0xFFFF)
 
             # Adjust offset for the current device (mapped ROM area)
@@ -137,92 +137,43 @@ class SsmFunctionEmulator:
             romid_tbl.enrich_entries(self.rom_cfg, current_device)
             # master_table was created inside enrich_entries for each entry
 
+    # TODO auf Dauer wieder weg
+    # def add_default_hooks(self, emulator: Emulator6303):
 
-    def add_default_hooks(self, emulator: Emulator6303):
+    #     # TODO Doppelt aktuell
+    #     def get_screen_line(em: Emulator6303, var_name: str) -> str:
+    #         # Collect printed data from screen buffer
+    #         ssm_display_line_buf_ptr = self.rom_cfg.address_by_name(var_name)
+    #         ssm_display_line_buf = em.mem.read_bytes(ssm_display_line_buf_ptr, 16)
+    #         return self.rom_cfg.byte_interpreter.render(ssm_display_line_buf)
 
-        # TODO Doppelt aktuell
-        def get_screen_line(em: Emulator6303, var_name: str) -> str:
-            # Collect printed data from screen buffer
-            ssm_display_line_buf_ptr = self.rom_cfg.address_by_name(var_name)
-            ssm_display_line_buf = em.mem.read_bytes(ssm_display_line_buf_ptr, 16)
-            return self.rom_cfg.byte_interpreter.render(ssm_display_line_buf)
+    #     # Add default hooks to config
+    #     def mock_print_upper_screen(em: Emulator6303):
 
-        # Add default hooks to config
-        def mock_print_upper_screen(em: Emulator6303):
+    #         print(f"Upper Screen [{get_screen_line(em, 'ssm_display_y0_x0')}]", flush=True)
+    #         insn = em.dasm.disassemble_step(em.PC) # TODO anders
+    #         if not insn:
+    #             raise RuntimeError("Couldn't fetch mock_print_upper_screen instruction")
+    #         em.clc(insn)
+    #         em.rts(insn)
 
-            print(f"Upper Screen [{get_screen_line(em, 'ssm_display_y0_x0')}]", flush=True)
-            insn = em.dasm.disassemble_step(em.PC) # TODO anders
-            if not insn:
-                raise RuntimeError("Couldn't fetch mock_print_upper_screen instruction")
-            em.clc(insn)
-            em.rts(insn)
+    #     def mock_print_lower_screen(em: Emulator6303):
+    #         print(f"Lower Screen [{get_screen_line(em, 'ssm_display_y1_x0')}]", flush=True)
+    #         insn = em.dasm.disassemble_step(em.PC)
+    #         if not insn:
+    #             raise RuntimeError("Couldn't fetch mock_print_lower_screen instruction")
+    #         em.clc(insn)
+    #         em.rts(insn)
 
-        def mock_print_lower_screen(em: Emulator6303):
-            print(f"Lower Screen [{get_screen_line(em, 'ssm_display_y1_x0')}]", flush=True)
-            insn = em.dasm.disassemble_step(em.PC)
-            if not insn:
-                raise RuntimeError("Couldn't fetch mock_print_lower_screen instruction")
-            em.clc(insn)
-            em.rts(insn)
-
-        emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
-        emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
+    #     emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
+    #     emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
 
         
 
-
-
-        def hook_write_ssm_tx_bytes(addr: int, value: int, mem: MemoryManager):
-            ssm_tx_bytes = mem.read_bytes(self.rom_cfg.address_by_name("ssm_tx_byte_0"), 4, allow_hooks=False)
-            print(f"SSM TX Bytes: {' '.join(f'{b:02X}' for b in ssm_tx_bytes)}", flush=True)
-
-            # Simulate a good answer: e.g. 78 12 34 00 answer would be 12 34 nn
-            ssm_rx_bytes_ptr = self.rom_cfg.address_by_name("ssm_rx_byte_0")
-            mem.write(ssm_rx_bytes_ptr, ssm_tx_bytes[1])
-            mem.write(ssm_rx_bytes_ptr+1, ssm_tx_bytes[2])
-
-            # TODO Das EMU in den ganzen Hooks funktioniert noch nicht... müsste man die Aufrufe irgendwie schon in den Mem-Manager packen? 
-            # Dürfen die allgemein nicht hier stehen?
-
-            ssm_rx_bytes = mem.read_bytes(self.rom_cfg.address_by_name("ssm_rx_byte_0"), 3, allow_hooks=False)
-            print(f"hook_write_ssm_tx_bytes RX Bytes: {' '.join(f'{b:02X}' for b in ssm_rx_bytes)}", flush=True)
-            #mem.bla=True
-
-        def hook_read_ssm_rx_bytes(add, value, mem: MemoryManager):
-            ssm_rx_bytes = mem.read_bytes(self.rom_cfg.address_by_name("ssm_rx_byte_0"), 3, allow_hooks=False)
-            print(f"hook_read_ssm_rx_bytes RX Bytes: {' '.join(f'{b:02X}' for b in ssm_rx_bytes)}", flush=True)
-
-
-
-        def hook_pre_read_from_ecu(em: Emulator6303):
-            print("hock_pre_read_from_ecu")
-            em.hooks.add_write_hook(self.rom_cfg.address_by_name("ssm_tx_byte_3"), hook_write_ssm_tx_bytes)
-
-            em.hooks.add_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_0"), hook_read_ssm_rx_bytes)
         
-        # TODO im emulator muss das noch angepasst werden, dass das auch am Ende einer Funktion passiert
-        def hook_post_read_from_ecu(em: Emulator6303, access):
-            print(f"hook_post_read_from_ecu: {access}")
-            em.hooks.remove_write_hook(self.rom_cfg.address_by_name("ssm_tx_byte_3"), hook_write_ssm_tx_bytes)
-        
-        emulator.hooks.add_pre_hook(self.rom_cfg.address_by_name("read_from_ecu"), hook_pre_read_from_ecu)
-        emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("read_from_ecu"), hook_post_read_from_ecu)
 
         # TODO Wait_ms
     
-    # def run_master_table_action_functions(self):
-
-    #     for current_device in self.rom_cfg.selectable_devices:
-    #         emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
-    #         self.add_default_hooks(emulator)
-    #         emulator.set_pc(0xFFFF)
-
-    #         # Adjust offset for the current device (mapped ROM area)
-    #         self.set_attached_rom_area(emulator.mem, current_device)
-
-    #         for current_romid_table in self.rom_cfg.romid_tables[current_device]:
-
-
 
 
 
