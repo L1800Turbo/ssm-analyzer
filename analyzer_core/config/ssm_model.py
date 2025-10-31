@@ -47,10 +47,15 @@ class RomIdTableEntry_256kb(RomIdTableEntry):
     struct_format = "<B" # Dummy, da noch nicht definiert
     entry_size = struct.calcsize(struct_format)  # = 12 Bytes
 
+    ssm_year: Optional[int] = None  # TODO Das eigentlich noch nach oben, aber wie füllt man dann die RomIDtabelle vernünftig
+    ssm_model: Optional[str] = None
+
     @classmethod
     def from_bytes(cls, table_bytes:bytes) -> "RomIdTableEntry_512kb":
         unpacked = struct.unpack(cls.struct_format, table_bytes)
         return RomIdTableEntry_512kb(*unpacked)
+    
+
 
 @dataclass
 class RomIdTableEntry_512kb(RomIdTableEntry):
