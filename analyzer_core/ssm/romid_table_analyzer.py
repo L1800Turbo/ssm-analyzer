@@ -3,7 +3,7 @@ from dataclasses import replace
 import logging
 from typing import Optional
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import MasterTableInfo, RomIdTableEntry_256kb, RomIdTableEntry_512kb, RomIdTableInfo
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableInfo, RomIdTableEntry_256kb, RomIdTableEntry_512kb, RomIdTableInfo
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.ssm.master_table_analyzer import MasterTableAnalyzer
 from analyzer_core.ssm.romid_table_entry_analyzer import RomIdEntryAnalyzer
@@ -66,7 +66,7 @@ class RomIdTableAnalyzer:
             raise ValueError(f"Unsupported RomIdTableEntry size: {entry_size}")
         
     
-    def enrich_entries(self, rom_cfg: RomConfig, current_device) -> None:
+    def enrich_entries(self, rom_cfg: RomConfig, current_device: CurrentSelectedDevice) -> None:
         """
         Für jede Tabellen-Entry zusätzliche Infos mittels Emulation ermitteln:
          - Protokoll-Liste (ssm_cmd_protocols)
@@ -111,7 +111,7 @@ class RomIdTableAnalyzer:
                                     entries = []
                                 )
             master_table_analyzer = MasterTableAnalyzer(self.emulator, rom_cfg, entry)
-            master_table_analyzer.collect_master_table_entries()
+            master_table_analyzer.collect_master_table_entries(current_device)
 
 
 

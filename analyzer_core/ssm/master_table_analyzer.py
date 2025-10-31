@@ -1,6 +1,6 @@
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import MasterTableEntry, MasterTableInfo, RomEmulationError, RomIdTableEntry_512kb
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, MasterTableInfo, RomEmulationError, RomIdTableEntry_512kb
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.ssm.master_table_entry_analyzer import MasterTableEntryAnalyzer
@@ -22,7 +22,7 @@ class MasterTableAnalyzer:
     def __create_master_table(self):
         pass
 
-    def collect_master_table_entries(self):
+    def collect_master_table_entries(self, current_device: CurrentSelectedDevice):
         
         master_table_ptr = self.__romid_entry.master_table_address_rel
         possible_items_ptr = self.__romid_entry.final_menuitems_pointer
@@ -54,7 +54,7 @@ class MasterTableAnalyzer:
             self.__romid_entry.master_table.entries.append(entry)
 
             # TODO so sauber? Nicht das Zeug hier alles da rein?
-            entry_analyzer = MasterTableEntryAnalyzer(self.emulator, self.rom_cfg, self.__romid_entry, entry)
+            entry_analyzer = MasterTableEntryAnalyzer(self.emulator, self.rom_cfg, current_device, self.__romid_entry, entry)
         
     
 

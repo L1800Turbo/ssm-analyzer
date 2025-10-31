@@ -1,20 +1,22 @@
 import logging
+from typing import Optional
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import MasterTableEntry, RomIdTableEntry_512kb
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.emu.emulator_6303 import EmulationError, Emulator6303
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
+from analyzer_core.ssm.action_functions.action_helper import SsmActionHelper
+from analyzer_core.ssm.action_functions.action_year import SsmActionYear
 
 
 class MasterTableEntryAnalyzer:
-
-
-    def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, romid_entry:RomIdTableEntry_512kb, mt_entry: MasterTableEntry) -> None:
+    def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, current_device: CurrentSelectedDevice, romid_entry:RomIdTableEntry_512kb, mt_entry: MasterTableEntry) -> None:
         self.mt_entry = mt_entry
         self.romid_entry = romid_entry
         self.emulator = emulator
         self.rom_cfg = rom_cfg
+        self.current_device = current_device
         self.logger = logging.getLogger(__name__)
 
         self._save_labels()
@@ -53,24 +55,7 @@ class MasterTableEntryAnalyzer:
 
         def mock_default_action(em: Emulator6303):
             # Just return from the function
-            em.mock_return()      
-        
-
-        # TODO evtl in eigene Year klasse auslagern, unten das auch
-        def mock_year_print_upper_screen(em: Emulator6303):
-            screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
-            print(f"Upper Screen [{screen_line}]", flush=True)
-            self.romid_entry.ssm_year_model_str_1 = screen_line
-
             em.mock_return()
-        
-        def mock_year_print_lower_screen(em: Emulator6303):
-            screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
-            print(f"Upper Screen [{screen_line}]", flush=True)
-            self.romid_entry.ssm_year_model_str_2 = screen_line
-
-            em.mock_return()
-
 
 
         action_ptr = self.mt_entry.action_address_rel
@@ -98,18 +83,12 @@ class MasterTableEntryAnalyzer:
             
             return
         
-
-        def test_hook(emu):
-            pass
-
-
-        # TODO bei AT Action ist alles 1990. eine Var ist da wohl noch nciht gesetzt
+        action_helper: Optional[SsmActionHelper] = None
 
         if(action_fn.name == "action_year"):
-            self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_year_print_upper_screen)
-            self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_year_print_lower_screen)
-
-            #self.emulator.hooks.add_pre_hook(0x966A, test_hook)
+            # Run the YEAR interpreter
+            action_helper = SsmActionYear(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
+            action_helper.add_function_mocks()
 
         else:
             # If not already mocked
@@ -122,4 +101,9 @@ class MasterTableEntryAnalyzer:
 
         self.emulator.set_pc(self.rom_cfg.address_by_name("master_table_info_into_ram"))
         self.emulator.run_function_end(abort_pc=self.rom_cfg.address_by_name("master_table_main_loop"))
+
+        if action_helper is not None:
+            action_helper.run_post_actions()
+            
+        
        

@@ -87,8 +87,11 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
     final_menuitems_pointer:Optional[int] = None
 
     # To be determined by YEAR action
-    ssm_year_model_str_1: Optional[str] = None
-    ssm_year_model_str_2: Optional[str] = None
+    ssm_year_model_upper_str: Optional[str] = None
+    ssm_year_model_lower_str: Optional[str] = None
+
+    ssm_year: Optional[int] = None
+    ssm_model: Optional[str] = None
 
     # TODO Year in ausgewertet dazu
 
