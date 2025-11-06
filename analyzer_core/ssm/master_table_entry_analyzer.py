@@ -7,6 +7,7 @@ from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.emu.emulator_6303 import EmulationError, Emulator6303
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
 from analyzer_core.ssm.action_functions.action_helper import SsmActionHelper
+from analyzer_core.ssm.action_functions.action_scaling import SsmActionScalingFunction
 from analyzer_core.ssm.action_functions.action_year import SsmActionYear
 
 
@@ -56,6 +57,16 @@ class MasterTableEntryAnalyzer:
         def mock_default_action(em: Emulator6303):
             # Just return from the function
             em.mock_return()
+        
+        def mock_print_upper_screen(em: Emulator6303):
+            screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
+            print(f"Upper Screen [{screen_line}]", flush=True)
+            em.mock_return()
+        
+        def mock_print_lower_screen(em: Emulator6303):
+            screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
+            print(f"Lower Screen [{screen_line}]", flush=True)
+            em.mock_return()
 
 
         action_ptr = self.mt_entry.action_address_rel
@@ -85,25 +96,56 @@ class MasterTableEntryAnalyzer:
         
         action_helper: Optional[SsmActionHelper] = None
 
-        if(action_fn.name == "action_year"):
+        if action_fn.name == "action_year":
             # Run the YEAR interpreter
             action_helper = SsmActionYear(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
             action_helper.add_function_mocks()
 
+            SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
+        
+        elif action_fn.name == "action_read_ecu":
+            from analyzer_core.ssm.action_functions.action_read_ecu import SsmActionReadEcu
+            action_helper = SsmActionReadEcu(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
+            action_helper.add_function_mocks()
+
+            #SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
+
+        # TODO für Read-Funktion und was da noch kommt:
+        # MAnche wollen ein Lower Scaling, manche nicht.
+        # Read dann hier emulieren, für die Adresse
+        # Dann setzt der auch für die Maintable-loop (emulieren oder von hand?) die passenden bits
+        # Hier vorerst: Lower-Scaling-Mastertable-Funktion aufrufen, die dann die Scaling Funktion aufruft
+
         else:
             # If not already mocked
             if not self.emulator.hooks.get_mock(action_ptr):
-                self.logger.warning(f"No handling defined for action function {action_fn.name} (0x{action_fn.address:04X}) for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
+                self.logger.warning(f"No handling defined for action function {action_fn.name} (0x{action_fn.address:04X}) "
+                                    f"for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
                 self.emulator.hooks.mock_function(action_ptr, mock_default_action)
 
+                # Also mock the print functions to just print the labels for debug
+                self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
+                self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
 
-        SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
+                SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
+
+
+        
 
         self.emulator.set_pc(self.rom_cfg.address_by_name("master_table_info_into_ram"))
         self.emulator.run_function_end(abort_pc=self.rom_cfg.address_by_name("master_table_main_loop"))
 
         if action_helper is not None:
             action_helper.run_post_actions()
-            
-        
+
+            if action_helper.needs_scaling_fn:
+                action_scaling_helper = SsmActionScalingFunction(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
+                action_scaling_helper.add_function_mocks()
+                self.emulator.set_pc(self.rom_cfg.address_by_name("mastertable_run_scaling_fn"))
+                self.emulator.run_function_end(abort_pc=self.rom_cfg.address_by_name("master_table_main_loop"))
+                action_scaling_helper.run_post_actions()
+
+                #var_X012E_response_received_flag　がほしいです 
+
+
        

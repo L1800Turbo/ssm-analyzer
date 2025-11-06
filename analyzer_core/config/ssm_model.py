@@ -7,6 +7,9 @@ from enum import IntEnum
 import struct
 from typing import Optional, Union
 
+# Circular imports avoided
+# from analyzer_core.ssm.action_functions.action_helper import SsmAction
+
 class RomEmulationError(Exception):
     pass
 
@@ -85,16 +88,13 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
     menuitems_upper_label_pointer:Optional[int] = None
     menuitems_lower_label_pointer:Optional[int] = None
     adjustments_label_pointer:Optional[int] = None
-    current_scale_table_pointer:Optional[int] = None
+    current_scale_fn_table_pointer:Optional[int] = None
     romid_upper_label_pointer:Optional[int] = None
     romid_lower_label_pointer:Optional[int] = None
 
     final_menuitems_pointer:Optional[int] = None
 
     # To be determined by YEAR action
-    ssm_year_model_upper_str: Optional[str] = None
-    ssm_year_model_lower_str: Optional[str] = None
-
     ssm_year: Optional[int] = None
     ssm_model: Optional[str] = None
 
@@ -141,7 +141,9 @@ class MasterTableEntry:
 
     hidden: Optional[bool] = False
     upper_label: Optional[str] = ""
-    lower_label: Optional[str] = ""
+    #lower_label: Optional[str] = "" # TODO noch weg, oder? Kommt erst in der Action
+
+    action: Optional["SsmAction"] = None
 
     def menu_item_str(self):
         return f"{(self.menu_item_0&0xF):0X}{(self.menu_item_1&0xF):0X}{(self.menu_item_2&0xF):0X}"
@@ -150,5 +152,23 @@ class MasterTableEntry:
     def from_bytes(cls, table_bytes:bytes) -> "MasterTableEntry":
         unpacked = struct.unpack(cls.struct_format, table_bytes)
         return MasterTableEntry(*unpacked)
+
+
+class ActionType(IntEnum):
+    YEAR = 1
+    READ_ADDRESS = 2
+    #...
+
+@dataclass
+class SsmAction:
+    action_type: ActionType
+
+    upper_label_raw: str
+    lower_label_raw: str
+
+    ecu_address: Optional[int] = None
+    data_scaling: Optional[str] = None
+
+
     
     

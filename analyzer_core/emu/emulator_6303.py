@@ -20,6 +20,8 @@ from analyzer_core.disasm.capstone_wrap import Disassembler630x, OperandType
 class EmulationError(Exception):
     pass
 
+logger = logging.getLogger(__name__)
+
 @dataclass
 class CPUFlags:
     C: int = 0  # Carry
@@ -28,6 +30,8 @@ class CPUFlags:
     V: int = 0  # Overflow
     I: int = 0  # IRQ mask
 
+    def to_byte(self) -> int:
+        return ((self.N & 0x01) << 7) | ((self.V & 0x01) << 6) | (1 << 5) | ((self.I & 0x01) << 4) | ((self.Z & 0x01) << 2) | (0 << 1) | (self.C & 0x01)
 
 def operand_needed(func):
     def wrapper(self, instr: Instruction):
@@ -53,8 +57,6 @@ class Emulator6303:
         initial_sp: Optional[int] = None
     ) -> None:
         
-        self.logger = logging.getLogger(__name__)
-
         self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom) # TODO Das noch raus, wird aber aus den Mocks genommen, mit debugger ugcken, wie man das weg bekommt
 
         self.memory_map = memory_map if memory_map else MemoryMap()
@@ -71,12 +73,23 @@ class Emulator6303:
         self.PC = start_pc & 0xFFFF
         self.flags = CPUFlags()
 
+        self.asm_logger: dict[str, Callable[[Instruction, MemAccess], None]] = {}
+
+        # TODO Noch registrieren und hier weg
         try:
             log_path = Path("logs/asm_trace.html")
-            self.asm_logger = AsmHtmlLogger(log_path, append=True)
+            self.asm_html_logger = AsmHtmlLogger(log_path, append=True)
         except Exception:
-            self.asm_logger = None
+            self.asm_html_logger = None
 
+
+    # --- Helpers for tracing / logging ---
+    def add_logger(self, name:str, callback:Callable[[Instruction, MemAccess], None]) -> None:
+        self.asm_logger[name] = callback
+    
+    def remove_logger(self, name:str) -> None:
+        if name in self.asm_logger:
+            del self.asm_logger[name]
 
     # --- Helpers: memory/registers/stack ---
     def __read_value8(self, instr: Instruction) -> MemAccess:
@@ -265,6 +278,18 @@ class Emulator6303:
         ret_addr = self.pull16()
         self.PC = ret_addr & 0xFFFF
 
+        # Take care of post-hooks as we might miss them by skipping instructions
+        for pc in list(self.hooks.waiting_for_post_hook.keys()):
+            level = self.hooks.waiting_for_post_hook[pc]
+            if level > 0:
+                self.hooks.waiting_for_post_hook[pc] -= 1
+            if self.hooks.waiting_for_post_hook[pc] == 0:
+                try:
+                    self.hooks.run_post_hooks(pc, self, None)
+                    self.hooks.waiting_for_post_hook.pop(pc)
+                except Exception as e:
+                    raise EmulationError(f"Post-hook at 0x{pc:04X} failed: {e}")
+
 
     def step(self) -> Optional[MemAccess]:
         # run pre-hooks (they may set memory/registers but must not consume the instruction)
@@ -274,7 +299,7 @@ class Emulator6303:
             raise EmulationError(f"Pre-hook at 0x{self.PC:04X} failed: {e}")
         
         if len(self.hooks.get_post_hooks(self.PC)) > 0:
-            self.hooks.waiting_for_post_hook = True
+            self.hooks.waiting_for_post_hook[self.PC] = 1
 
 
         # Check if this function is checked to be mocked
@@ -297,17 +322,30 @@ class Emulator6303:
             # TODO hier die steps auswerten?
             # TODO in eigene Log schmeißen direkt
 
-            if self.asm_logger is not None:
-                self.asm_logger.log(asm_step)
+            for logger in self.asm_logger.values():
+                logger(instr, asm_step)
+
+
+            # TODO Entfallen lassen und dann auch als logger registrieren
+            if self.asm_html_logger is not None:
+                self.asm_html_logger.log(asm_step)
             else:
                 print(asm_step)
 
-            if instr.is_return and self.hooks.waiting_for_post_hook:
-                self.hooks.waiting_for_post_hook = False
-                try:
-                    self.hooks.run_post_hooks(instr.address, self, asm_step)
-                except Exception as e:
-                    raise EmulationError(f"Post-hook at 0x{instr.address:04X} failed: {e}")
+            # Take care of post-hooks
+            for pc in list(self.hooks.waiting_for_post_hook.keys()):
+                level = self.hooks.waiting_for_post_hook[pc]
+                if instr.is_function_call and level > 0:
+                    # Function call: set level for post-hook
+                    self.hooks.waiting_for_post_hook[pc] += 1
+                elif instr.is_return and level > 0:
+                    self.hooks.waiting_for_post_hook[pc] -= 1
+                if self.hooks.waiting_for_post_hook[pc] == 0:
+                    try:
+                        self.hooks.run_post_hooks(pc, self, asm_step)
+                        self.hooks.waiting_for_post_hook.pop(pc)
+                    except Exception as e:
+                        raise EmulationError(f"Post-hook at 0x{pc:04X} failed: {e}")
 
             return asm_step
         
@@ -612,6 +650,28 @@ class Emulator6303:
         self.PC += instr.size
         ma.next_instr_addr = self.PC
         return ma
+    
+    @operand_needed
+    def eora(self, instr: Instruction) -> MemAccess:
+        addr = instr.target_value
+        if addr is None:
+            raise ValueError("Invalid target address")
+
+        self.A = (self.A ^ addr) & 0xFF
+        self._set_ZN_8(self.A)
+        self.flags.V = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=None,
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
 
     def clra(self, instr: Instruction) -> MemAccess:
         self.A = 0
@@ -700,6 +760,27 @@ class Emulator6303:
             by=self.PC,
             next_instr_addr=self.PC
         )
+    
+    def asl(self, instr: Instruction) -> MemAccess:
+        addr = instr.target_value
+        if addr is None:
+            raise ValueError("Invalid target address")
+        
+        val = self.read8(addr)
+        val = self._shift_left(val)
+        self.write8(addr, val)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            instr=instr,
+            target_addr=addr,
+            var=self.rom_config.get_by_address(addr),
+            value=val,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
 
     def asra(self, instr: Instruction) -> MemAccess:
         self.A = self._shift_right(self.A, arithmetic=True)
@@ -761,6 +842,29 @@ class Emulator6303:
             next_instr_addr=self.PC
         )
     
+    @operand_needed
+    def lsr(self, instr: Instruction) -> MemAccess:
+        addr = instr.target_value
+        if addr is None:
+            raise ValueError("Invalid target address")
+        
+        val = self.read8(addr)
+        val = self._shift_right(val, arithmetic=False)
+        self.write8(addr, val)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            instr=instr,
+            target_addr=addr,
+            var=self.rom_config.get_by_address(addr),
+            value=val,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+    
+    
     def rola(self, instr: Instruction) -> MemAccess:
         self.A = self._rotate_left(self.A)
 
@@ -786,6 +890,48 @@ class Emulator6303:
             target_addr=None,
             var=self.rom_config.get_by_address(self.B),
             value=self.B,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+    
+    def rol(self, instr: Instruction) -> MemAccess:
+        addr = instr.target_value
+        if addr is None:
+            raise ValueError("Invalid target address")
+        
+        val = self.read8(addr)
+        val = self._rotate_left(val)
+        self.write8(addr, val)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            instr=instr,
+            target_addr=addr,
+            var=self.rom_config.get_by_address(addr),
+            value=val,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+    
+    def ror(self, instr: Instruction) -> MemAccess:
+        addr = instr.target_value
+        if addr is None:
+            raise ValueError("Invalid target address")
+        
+        val = self.read8(addr)
+        val = self._rotate_right(val)
+        self.write8(addr, val)
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            instr=instr,
+            target_addr=addr,
+            var=self.rom_config.get_by_address(addr),
+            value=val,
             rw='W',
             by=self.PC,
             next_instr_addr=self.PC
@@ -1222,6 +1368,46 @@ class Emulator6303:
             next_instr_addr=self.PC
         )
     
+    @operand_needed
+    def bhi(self, instr: Instruction) -> MemAccess:
+        """Branch if Higher (C == 0 and Z == 0)"""
+        old_PC = self.PC
+
+        if self.flags.C == 0 and self.flags.Z == 0:
+            self.PC = instr.target_value
+        else:
+            self.PC += instr.size
+
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=self.rom_config.get_by_address(old_PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+
+    @operand_needed
+    def bpl(self, instr: Instruction) -> MemAccess:
+        """Branch if Plus (N == 0)"""
+        old_PC = self.PC
+
+        if self.flags.N == 0:
+            self.PC = instr.target_value
+        else:
+            self.PC += instr.size
+
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=self.rom_config.get_by_address(old_PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+
     def psha(self, instr: Instruction) -> MemAccess:
         self.push8(self.A)
 
@@ -1672,7 +1858,7 @@ class Emulator6303:
         )
 
     def sei(self, instr: Instruction) -> MemAccess:
-        self.logger.warning("Command sei has currently no effect!")
+        #logger.warning("Command sei has currently no effect!")
         self.flags.I = 1
 
         old_PC = self.PC
@@ -1683,6 +1869,43 @@ class Emulator6303:
             target_addr=None,
             var=None,
             value=self.flags.I,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+    
+    def tpa(self, instr: Instruction) -> MemAccess:
+        # Transfer CCR (Flags) to A
+        self.A = self.flags.to_byte()
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=None,
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+    
+    def tap(self, instr: Instruction) -> MemAccess:
+        # Transfer A to CCR (Flags)
+        flags_byte = self.A
+        self.flags.N = (flags_byte >> 7) & 1
+        self.flags.V = (flags_byte >> 6) & 1
+        self.flags.I = (flags_byte >> 4) & 1
+        self.flags.Z = (flags_byte >> 2) & 1
+        self.flags.C = flags_byte & 1
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=None,
+            value=self.A,
             rw='W',
             by=self.PC,
             next_instr_addr=self.PC

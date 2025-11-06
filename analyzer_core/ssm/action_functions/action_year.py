@@ -2,10 +2,12 @@ import logging
 import re
 from typing import Optional
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb
+from analyzer_core.config.ssm_model import ActionType, CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, SsmAction
 from analyzer_core.emu.emulator_6303 import EmulationError, Emulator6303
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
 from analyzer_core.ssm.action_functions.action_helper import SsmActionHelper
+
+log = logging.getLogger(__name__)
 
 
 class SsmActionYear(SsmActionHelper):
@@ -16,14 +18,13 @@ class SsmActionYear(SsmActionHelper):
                  current_device: CurrentSelectedDevice, 
                  romid_entry:RomIdTableEntry_512kb, 
                  mt_entry: MasterTableEntry) -> None:
-        self.logger = logging.getLogger(__name__)
 
         self.rom_cfg = rom_cfg
         self.emulator = emulator
 
         self.current_device = current_device
-        self.mt_entry = mt_entry
         self.romid_entry = romid_entry
+        self.mt_entry = mt_entry
 
         self.year_model_upper_str: Optional[str] = None
         self.year_model_lower_str: Optional[str] = None
@@ -35,14 +36,14 @@ class SsmActionYear(SsmActionHelper):
 
         def mock_year_print_upper_screen(em: Emulator6303):
             screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
-            print(f"Upper Screen [{screen_line}]", flush=True)
+            #print(f"Upper Screen [{screen_line}]", flush=True)
             self.year_model_upper_str = screen_line
 
             em.mock_return()
         
         def mock_year_print_lower_screen(em: Emulator6303):
             screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
-            print(f"Upper Screen [{screen_line}]", flush=True)
+            #print(f"Lower Screen [{screen_line}]", flush=True)
             self.year_model_lower_str = screen_line
 
             em.mock_return()
@@ -62,13 +63,17 @@ class SsmActionYear(SsmActionHelper):
         '''
         Save the year model strings into the RomID entry
         '''
-        self.romid_entry.ssm_year_model_upper_str = self.year_model_upper_str
-        self.romid_entry.ssm_year_model_lower_str = self.year_model_lower_str
         
         if self.year_model_upper_str is None or self.year_model_lower_str is None:
             raise EmulationError("YEAR action did not set both year model strings.")
-        
+
         self.romid_entry.ssm_year, self.romid_entry.ssm_model = self.__interpret_year_string(self.year_model_upper_str + " " + self.year_model_lower_str)
+
+        self.mt_entry.action = SsmAction(
+            action_type=ActionType.YEAR,
+            upper_label_raw=self.year_model_upper_str,
+            lower_label_raw=self.year_model_lower_str
+        )
     
 
     def __interpret_year_string(self, year_model_str: str) -> tuple[int, str]:

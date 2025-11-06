@@ -17,7 +17,7 @@ class HookManager:
         self._mocked_functions: Dict[int, Callable] = {}
 
         # Helper to track if we are waiting for post hooks at function beginnings
-        self.waiting_for_post_hook = False
+        self.waiting_for_post_hook: Dict[int, int] = {}
 
         self.logger = logging.getLogger(f"{__name__}.HookManager")
 

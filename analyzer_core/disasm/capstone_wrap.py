@@ -2,29 +2,48 @@ from enum import Enum, auto
 import logging
 from typing import List, Optional, Tuple
 from capstone import Cs, CsInsn, CS_ARCH_M680X, CS_MODE_M680X_6301
+
+from analyzer_core.config.memory_map import RegionKind
+from analyzer_core.emu.memory_manager import MemoryManager
 from .insn_model import INSTRUCTION_GROUPS, Instruction
+
+logger = logging.getLogger(f"{__name__}")
 
 # TODO Adressierungen nochmal mit Datenblat durchgehen
 class OperandType(Enum):
-    IMMEDIATE = auto()
-    DIRECT = auto()
-    INDIRECT = auto()
-    #REGISTER = auto()
+    IMMEDIATE = auto()  # Direct access to value #$xx
+    DIRECT = auto()     # Access to address $xx
+    INDIRECT = auto()   # Access by pointer $xx, x
     UNKNOWN = auto()
 
 class Disassembler630x:
-    def __init__(self, rom:bytes, arch=CS_ARCH_M680X, mode=CS_MODE_M680X_6301):
+    def __init__(self, rom: Optional[bytes] = None, mem: Optional[MemoryManager] = None, arch=CS_ARCH_M680X, mode=CS_MODE_M680X_6301):
         self.cs = Cs(arch, mode)
-        self.logger = logging.getLogger(f"{__name__}")
 
         self.rom = rom
+        self.mem = mem
 
     def __disassemble(self, code: bytes, address_offset: int, count:int = 0):
         """Disassembles code from address_offset. Returns an iterator of CsInsn."""
         return self.cs.disasm(code, address_offset, count)
+    
+    def read_bytes(self, addr: int, length: int) -> bytes:
+        if self.mem is not None:
+            return self.mem.read_bytes(addr, length)
+        elif self.rom is not None:
+            return self.rom[addr:addr+length]
+        else:
+            raise RuntimeError("No memory source available")
 
     def in_rom(self, addr: int) -> bool:
-        return 0 <= addr < len(self.rom)
+        if self.rom is not None:
+            return 0 <= addr < len(self.rom)
+        elif self.mem is not None:
+            # Prüfe, ob die Adresse im ROM-Bereich liegt
+            region = self.mem.memory_map.region_lookup(addr)
+            return region is not None and (region.kind == RegionKind.ROM or region.kind == RegionKind.MAPPED_ROM)
+        else:
+            return False
 
     def parse_op_str(self, instr: Instruction) -> Optional[Tuple[OperandType, int]]:
         """Parses an operand string and returns type + value."""
@@ -53,7 +72,7 @@ class Disassembler630x:
             elif instr.op_str.isdigit():
                 return OperandType.INDIRECT, int(instr.op_str)
         except ValueError as e:
-            self.logger.warning(f"Unknown operand format {instr.op_str}: {str(e)}")
+            logger.warning(f"Unknown operand format {instr.op_str}: {str(e)}")
             return OperandType.UNKNOWN, 0
             #raise ValueError(f"Unsupported operand format: {op_str}")
 
@@ -62,12 +81,13 @@ class Disassembler630x:
         if not self.in_rom(addr):
             return None
 
-        capstone_instr = list(self.__disassemble(self.rom[addr:addr+8], addr, 1))
+        #capstone_instr = list(self.__disassemble(self.rom[addr:addr+8], addr, 1))
+        capstone_instr = list(self.__disassemble(self.read_bytes(addr, 8), addr, 1))
         if not capstone_instr:
             return None
         
         ins = capstone_instr[0]
-        ins_bytes = self.rom[addr:addr + ins.size]
+        ins_bytes = self.read_bytes(addr, ins.size)
         instr = Instruction(address=addr & 0xFFFF, size=ins.size, bytes=ins_bytes, mnemonic=ins.mnemonic, op_str=ins.op_str)
 
         result = self.parse_op_str(instr)
@@ -133,14 +153,14 @@ class Disassembler630x:
                     subtree = tree.setdefault(callee, {})                        
 
                     if instr.target_type == OperandType.INDIRECT:
-                        self.logger.info(f"Indirect function call from {instr.address:#04x} to {instr.target_value:#04x}, only possible in emulation")
+                        logger.info(f"Indirect function call from {instr.address:#04x} to {instr.target_value:#04x}, only possible in emulation")
                     else:
                         worklist.append((callee, callee, subtree))
 
                 # Jump (jmp, lbra) -> only take the target and break
                 if instr.is_jump and instr.target_value is not None:
                     if instr.target_type == OperandType.INDIRECT:
-                        self.logger.warning(f"Indirect jump from {instr.address:#04x} to {instr.target_value:#04x}, only possible in emulation!")
+                        logger.warning(f"Indirect jump from {instr.address:#04x} to {instr.target_value:#04x}, only possible in emulation!")
                     else:
                         worklist.append((instr.target_value, func_entry, tree))
                     break

@@ -1,4 +1,6 @@
 from dataclasses import asdict
+import dataclasses
+import enum
 from pathlib import Path
 from PyQt6.QtCore import Qt, QModelIndex, QPoint, QAbstractItemModel
 from PyQt6.QtGui import QFontDatabase, QKeySequence, QBrush
@@ -47,7 +49,7 @@ class RomCatalogWidget(QWidget):
                 for k, v in value.items():
                     node.appendRow(object_to_tree_items(k, v))
                 return [node]
-            elif hasattr(value, "__dict__"):
+            elif dataclasses.is_dataclass(value) and not isinstance(value, type):
                 for k, v in asdict(value).items():
                     node.appendRow(object_to_tree_items(k, v))
                 return [node]
@@ -57,7 +59,9 @@ class RomCatalogWidget(QWidget):
                 return [node]
             else:
                 # Primitive Werte direkt als zweite Spalte
-                if isinstance(value, int):
+                if isinstance(value, enum.Enum):
+                    return [node, QStandardItem(f"{value.name} ({value.value})")]
+                elif isinstance(value, int):
                     return [node, QStandardItem(hex(value))]
                 return [node, QStandardItem(str(value))]
 

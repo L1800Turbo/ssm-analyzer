@@ -13,6 +13,20 @@
       ]
     },
     {
+      "name": "divide",
+      "start_address": "REF{divide}",
+      "pattern": [
+        { "mnemonic": "ldx" },
+        { "mnemonic": "std" },
+        { "mnemonic": "clra" },
+        { "mnemonic": "clrb" },
+        { "mnemonic": "asl" },
+        { "mnemonic": "rol", "op_str": "VAR{print_hex_buffer_2}" },
+        { "mnemonic": "rol", "op_str": "VAR{print_hex_buffer_1}" },
+        { "mnemonic": "rol", "op_str": "VAR{print_hex_buffer_0}" }
+      ]
+    },
+    {
       "name": "select_system",
       "depends_on": ["wait_ms"],
       "pattern": [
@@ -277,7 +291,7 @@
         { "mnemonic": "ldx" },
         { "mnemonic": "stx", "op_str": "VAR{adjustments_label_pointer}" },
         { "mnemonic": "ldx" },
-        { "mnemonic": "stx", "op_str": "VAR{current_scale_table_pointer}" },
+        { "mnemonic": "stx", "op_str": "VAR{current_scale_fn_table_pointer}" },
         { "mnemonic": "ldx" },
         { "mnemonic": "stx", "op_str": "VAR{menuitems_lower_label_pointer}" },
         { "mnemonic": "ldx" },
@@ -302,7 +316,7 @@
     {
       "name": "master_table_main_loop",
       "pattern": [
-        { "mnemonic": "tst", "op_str": "VAR{IF_Check_Active_tbd}" },
+        { "mnemonic": "tst", "op_str": "VAR{IF_check_read_active}" },
         { "mnemonic": "beq" },
         { "mnemonic": "tst" },
         { "mnemonic": "bne" },
@@ -357,6 +371,26 @@
         { "mnemonic": "com", "op_str": "REF{ssm_rx_byte_0}" },
         { "mnemonic": "com", "op_str": "REF{ssm_rx_byte_1}" }
       ]
+    },
+    {
+      "name": "mastertable_run_scaling_fn",
+      "depends_on": ["master_table_main_loop"],
+      "pattern": [
+        { "mnemonic": "ldaa", "op_str": 1 },
+        { "mnemonic": "staa", "op_str": "VAR{activate_scaling_in_MT_MainLoop}" },
+        { "mnemonic": "tst", "op_str": "VAR{response_received_flag}" },
+        { "mnemonic": "beq" },
+        { "mnemonic": "clr" },
+        { "mnemonic": "ldaa", "op_str": "REF{current_ssm_protocol_version}" },
+        { "mnemonic": "cmpa", "op_str": 2 },
+        { "mnemonic": "beq" },
+        { "max_skip": 9},
+        { "mnemonic": "clr" },
+        { "mnemonic": "clr", "op_str": "VAR{print_-_sign}" },
+        { "mnemonic": "clr", "op_str": "VAR{print_+_sign}" },
+        { "mnemonic": "ldx", "op_str": "REF{current_scale_fn_table_pointer}" }
+      ],
+      "description": "IMPREZA96 @0xAC7B: Call scaling function from Mastertable MainLoop, TODO: clr hat response_received_flag"
     }
   ],
   "action_table_pointer_pattern":
@@ -373,6 +407,34 @@
         { "mnemonic": "ldx" }
       ],
       "description": "IMPREZA96 @0x95E9: Action for YEAR function, print model year and ECU version to screen"
+    },
+    {
+      "name": "action_read_ecu",
+      "pattern": [
+        { "mnemonic": "staa", "op_str": "REF{current_scaling_index}" },
+        { "mnemonic": "ldaa", "op_str": "0x01" },
+        { "mnemonic": "staa", "op_str": "REF{IF_check_read_active}" },
+        { "mnemonic": "stab", "op_str": "REF{current_ecu_address_index}" },
+        { "mnemonic": "jsr",  "op_str": "FN{set_current_ecu_address}" },
+        { "mnemonic": "jsr",  "op_str": "FN{read_from_ecu}" },
+        { "mnemonic": "bcs"}
+      ],
+      "description": "IMPREZA96 @0x96A9: Action for READ CU function"
+    }
+  ],
+  "scaling_function_pattern":
+  [
+    {
+      "name": "print_lower_value",
+      "pattern": [
+        { "mnemonic": "jsr" },
+        { "mnemonic": "jsr", "op_str": "FN{hex2ascii}" },
+        { "mnemonic": "tst", "op_str": "VAR{decimal_places}" },
+        { "mnemonic": "bne" },
+        { "mnemonic": "jsr" },
+        { "mnemonic": "bra" }
+      ],
+      "description": ""
     }
   ],
   "strings": {

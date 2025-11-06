@@ -2,13 +2,14 @@ from typing import Iterable, Optional, Tuple
 from analyzer_core.config.memory_map import MemoryMap, MemoryRegion, RegionKind
 from analyzer_core.data.rom_image import RomImage
 from analyzer_core.emu.hooks import HookManager
+from analyzer_core.emu.ram import Ram
 
 class MemoryManager:
-
-    def __init__(self, memory_map: MemoryMap, rom_image: RomImage, ram: Optional[bytearray] = None, hooks: Optional[HookManager] = None):
+    def __init__(self, memory_map: MemoryMap, rom_image: RomImage, hooks: Optional[HookManager] = None):
         self.memory_map = memory_map
         self.rom_image = rom_image
-        self.ram = ram if ram is not None else bytearray(0x2000)  # Default RAM size
+        self.ram = Ram(0x2000)  # Default RAM size
+        #self.ram = ram if ram is not None else bytearray(0x2000)  # Default RAM size
         self.hooks = hooks
 
         self.mapped_rom_offset = None
@@ -18,7 +19,7 @@ class MemoryManager:
         self.__read_memory = set()
         self.__written_memory = set()
 
-        self.__add_default_values()
+        #self.__add_default_values()
 
     def set_mapped_region(self, offset:int):
         '''
@@ -38,7 +39,7 @@ class MemoryManager:
             self.hooks.run_read_hooks(address, value, self)
 
         if region.kind == RegionKind.RAM:
-            value = self.ram[address - region.start]
+            value = self.ram.read8(address - region.start)
             # TODO Warnung, wenn die RAM-Stelle nicht initialisiert ist!
         elif region.kind == RegionKind.ROM:
             # ROM is being read without any offset as it's the original ROM file
@@ -71,7 +72,7 @@ class MemoryManager:
             raise ValueError(f"Address 0x{address:04X} not mapped to any region.")
             
         if region.kind == RegionKind.RAM:
-            self.ram[address - region.start] = value & 0xFF
+            self.ram.write8(address - region.start, value)
         elif region.kind == RegionKind.IO:
             # IO access could be handled by hooks/mocks
             # TODO noch anders
@@ -99,24 +100,24 @@ class MemoryManager:
     def get_written_memory_addresses(self):
         return self.__written_memory
 
-    def __add_default_values(self):
-        """
-        Setzt typische Default-Werte für HD6303 (Stack Pointer etc.) in den RAM.
-        """
-        # Beispiel: Initial Stack Pointer Value und weitere Defaults
-        # Annahme: RAM beginnt bei 0x0000
-        # 0x01FF: Stack Pointer
-        # 0x0200, 0x0201: weitere Initialwerte
-        # Die Adressen werden auf RAM-Offset gemappt
-        mapping = {
-            0x01FF: 0xFF,
-            0x0200: 0x00,
-            0x0201: 0x00,
-        }
-        for addr, value in mapping.items():
-            region = self.memory_map.region_lookup(addr)
-            if region and region.kind == RegionKind.RAM:
-                self.ram[addr - region.start] = value & 0xFF
+    # def __add_default_values(self):
+    #     """
+    #     Setzt typische Default-Werte für HD6303 (Stack Pointer etc.) in den RAM.
+    #     """
+    #     # Beispiel: Initial Stack Pointer Value und weitere Defaults
+    #     # Annahme: RAM beginnt bei 0x0000
+    #     # 0x01FF: Stack Pointer
+    #     # 0x0200, 0x0201: weitere Initialwerte
+    #     # Die Adressen werden auf RAM-Offset gemappt
+    #     mapping = {
+    #         0x01FF: 0xFF,
+    #         0x0200: 0x00,
+    #         0x0201: 0x00,
+    #     }
+    #     for addr, value in mapping.items():
+    #         region = self.memory_map.region_lookup(addr)
+    #         if region and region.kind == RegionKind.RAM:
+    #             self.ram[addr - region.start] = value & 0xFF
 
     
 
@@ -233,7 +234,8 @@ class MemoryManager:
         kind = region.kind
         if kind == RegionKind.RAM:
             offset = address - region.start
-            return memoryview(self.ram)[offset:offset + length]
+            data = self.ram.read_bytes(offset, length)
+            return memoryview(data)
 
         if kind == RegionKind.ROM:
             # ROM: direkt aus dem Original-Image

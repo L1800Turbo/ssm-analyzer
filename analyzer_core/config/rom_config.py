@@ -48,6 +48,7 @@ class RomConfig:
         self.instructions: dict[int, Instruction] = {}
         self.call_tree: dict = {}
         self.action_addresses: set[int] = set()
+        self.scaling_addresses: set[int] = set()
 
         # Pattern for detection
         self.pattern_repo: PatternRepository

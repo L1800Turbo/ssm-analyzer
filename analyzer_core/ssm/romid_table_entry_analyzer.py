@@ -226,7 +226,7 @@ class RomIdEntryAnalyzer:
         self.entry.menuitems_upper_label_pointer = ra16('menuitems_upper_label_pointer')
         self.entry.menuitems_lower_label_pointer = ra16('menuitems_lower_label_pointer')
         self.entry.adjustments_label_pointer = ra16('adjustments_label_pointer')
-        self.entry.current_scale_table_pointer = ra16('current_scale_table_pointer')
+        self.entry.current_scale_fn_table_pointer = ra16('current_scale_fn_table_pointer')
         self.entry.romid_upper_label_pointer = ra16('romid_upper_label_pointer')
         self.entry.romid_lower_label_pointer = ra16('romid_lower_label_pointer')
 
