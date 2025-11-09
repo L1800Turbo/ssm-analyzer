@@ -38,10 +38,23 @@
         { "mnemonic": "mul" },
         { "mnemonic": "abx" },
         { "mnemonic": "jsr", "op_str": "FN{set_lower_screen_buffer}" },
-        { "mnemonic": "jsr" },
+        { "mnemonic": "jsr", "op_str": "FN{set_display_only_no_cursor}" },
         { "mnemonic": "jsr", "op_str": "FN{print_lower_screen}" }
       ],
       "description": "SELECT SYSTEM Function"
+    },
+    {
+      "name": "set_display_only_no_cursor",
+      "depends_on": ["select_system"],
+      "start_address": "REF{set_display_only_no_cursor}",
+      "pattern": [
+        { "mnemonic": "psha" },
+        { "mnemonic": "ldaa", "op_str": "VAR{blink_cursor_flag}" },
+        { "mnemonic": "anda", "op_str": "#$FE" },
+        { "mnemonic": "staa", "op_str": "VAR{blink_cursor_flag}" },
+        { "mnemonic": "pula" },
+        { "mnemonic": "rts" }
+      ]
     },
     {
       "name": "set_upper_screen_buffer",
@@ -385,7 +398,7 @@
         { "mnemonic": "cmpa", "op_str": 2 },
         { "mnemonic": "beq" },
         { "max_skip": 9},
-        { "mnemonic": "clr" },
+        { "mnemonic": "clr", "op_str": "VAR{master_table_run_scaling_wait_counter}" },
         { "mnemonic": "clr", "op_str": "VAR{print_-_sign}" },
         { "mnemonic": "clr", "op_str": "VAR{print_+_sign}" },
         { "mnemonic": "ldx", "op_str": "REF{current_scale_fn_table_pointer}" }

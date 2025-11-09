@@ -56,3 +56,10 @@ class SsmEmuHelper:
         
         emulator.hooks.add_pre_hook(rom_cfg.address_by_name("read_from_ecu"), hook_pre_read_from_ecu)
         emulator.hooks.add_post_hook(rom_cfg.address_by_name("read_from_ecu"), hook_post_read_from_ecu)
+    
+    @classmethod
+    def set_ssm_response_received_flag(cls, rom_cfg:RomConfig, emulator: Emulator6303):
+        """
+        Set the response received flag to simulate a successful SSM communication.
+        """
+        emulator.mem.write(rom_cfg.address_by_name("response_received_flag"), 0x01)

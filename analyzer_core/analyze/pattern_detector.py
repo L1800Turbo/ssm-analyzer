@@ -255,6 +255,8 @@ class PatternDetector:
                 value = value.strip().lower()
                 if value.startswith("0x"):
                     return int(value, 16)
+                elif value.startswith("#$"):
+                    return int(value[2:], 16)
                 else:
                     return int(value, 10)
             return None

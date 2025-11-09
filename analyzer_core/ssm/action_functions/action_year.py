@@ -7,7 +7,7 @@ from analyzer_core.emu.emulator_6303 import EmulationError, Emulator6303
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
 from analyzer_core.ssm.action_functions.action_helper import SsmActionHelper
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 class SsmActionYear(SsmActionHelper):
@@ -52,11 +52,12 @@ class SsmActionYear(SsmActionHelper):
         self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_year_print_lower_screen)
 
 
-    def run_post_actions(self):
+    def run_post_actions(self) -> bool:
         '''
         Actions to be run after the YEAR action function has been emulated
         '''
         self.__save_year_model_strings()
+        return False
         
 
     def __save_year_model_strings(self):
@@ -74,6 +75,7 @@ class SsmActionYear(SsmActionHelper):
             upper_label_raw=self.year_model_upper_str,
             lower_label_raw=self.year_model_lower_str
         )
+        logger.debug(f"Found RomID entry for YEAR: {self.romid_entry.ssm_year}, MODEL: {self.romid_entry.ssm_model}")
     
 
     def __interpret_year_string(self, year_model_str: str) -> tuple[int, str]:

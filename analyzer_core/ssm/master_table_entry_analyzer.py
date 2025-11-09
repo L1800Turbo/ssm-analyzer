@@ -52,6 +52,9 @@ class MasterTableEntryAnalyzer:
         '''
         self.emulator.hooks.clear_hooks_and_mocks()
         SsmEmuHelper.execute_default_mocks(self.rom_cfg, self.emulator)
+
+        # Blinking is only visual, don't need it if it wasn't set before
+        self.emulator.mem.write(self.rom_cfg.address_by_name("blink_cursor_flag"), 0)
         
 
         def mock_default_action(em: Emulator6303):
@@ -71,27 +74,18 @@ class MasterTableEntryAnalyzer:
 
         action_ptr = self.mt_entry.action_address_rel
 
-        # Prequisities: Check if this function is already known in assembly
-        if action_ptr not in self.rom_cfg.action_addresses:
-            disasm = Disassembler630x(self.emulator.mem.rom_image.rom) # TODO Besser raussuchen?
-            disasm.disassemble_reachable(action_ptr, self.rom_cfg.instructions, self.rom_cfg.call_tree)
-
-            pattern_detector = PatternDetector(self.rom_cfg)
-            action_fn_patterns = pattern_detector.detect_patterns(self.rom_cfg.instructions, "action_table_pointer_pattern")
-            for action_fn_name, action_fn_addr in action_fn_patterns.items():
-                self.rom_cfg.add_function_address(action_fn_name, action_fn_addr)
-                self.rom_cfg.action_addresses.add(action_ptr)
+        # Decompile the action function if not already done
+        self.check_decompile(action_ptr)
 
         # Try to get this action function
         action_fn = self.rom_cfg.get_by_address(action_ptr)
 
+        # If the action function couldn't be matched, at all, yet
         if action_fn is None:
-            
             # Mock this function if not done already
             #if not self.emulator.hooks.get_mock(action_ptr):
             #    self.logger.warning(f"Action pointer address 0x{action_ptr:04X} couldn't be matched to a function.")
             self.emulator.hooks.mock_function(action_ptr, mock_default_action)
-            
             return
         
         action_helper: Optional[SsmActionHelper] = None
@@ -101,6 +95,7 @@ class MasterTableEntryAnalyzer:
             action_helper = SsmActionYear(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
             action_helper.add_function_mocks()
 
+            # TODO Wird da was gemacht??
             SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
         
         elif action_fn.name == "action_read_ecu":
@@ -117,7 +112,7 @@ class MasterTableEntryAnalyzer:
         # Hier vorerst: Lower-Scaling-Mastertable-Funktion aufrufen, die dann die Scaling Funktion aufruft
 
         else:
-            # If not already mocked
+            # If not already mocked, do this for unknown action patterns
             if not self.emulator.hooks.get_mock(action_ptr):
                 self.logger.warning(f"No handling defined for action function {action_fn.name} (0x{action_fn.address:04X}) "
                                     f"for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
@@ -138,14 +133,45 @@ class MasterTableEntryAnalyzer:
         if action_helper is not None:
             action_helper.run_post_actions()
 
+            ssm_rx_values = [0x00, 0xFF]  # Example SSM RX byte values to test
+
+            
+            # Run if scaling function should be called, check if value-dependent branches exist which require multiple runs
+            # Do this as long there are simulated ssm rx values to test
+            # TODO Evtl in eigene Funktion oder die Unterklasse auslagern?
             if action_helper.needs_scaling_fn:
                 action_scaling_helper = SsmActionScalingFunction(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
                 action_scaling_helper.add_function_mocks()
-                self.emulator.set_pc(self.rom_cfg.address_by_name("mastertable_run_scaling_fn"))
-                self.emulator.run_function_end(abort_pc=self.rom_cfg.address_by_name("master_table_main_loop"))
-                action_scaling_helper.run_post_actions()
+
+                additional_run_needed = True
+                while additional_run_needed and len(ssm_rx_values) > 0:
+                    self.emulator.mem.write(self.rom_cfg.address_by_name("ssm_rx_byte_2"), ssm_rx_values.pop(0))
+
+                    # Re-Set the SSM response received flag before running the scaling function again
+                    action_scaling_helper.emulate_receive_ssm_response()
+
+                    # Re-Set instruction parser
+                    action_scaling_helper.set_instrcution_parser()
+
+                    self.emulator.set_pc(self.rom_cfg.address_by_name("mastertable_run_scaling_fn"))
+                    self.emulator.run_function_end(abort_pc=self.rom_cfg.address_by_name("master_table_main_loop"))
+                    additional_run_needed = action_scaling_helper.run_post_actions()
+
+                    # TODO den zahlen-aufräum-kram dann nicht mehr in den post_actions, sondern in einer eigenen funktion hier?
+                    # TODO Das mit mehreren Durchläufen funktioniert noch nicht. Muss das read nochmal weil der Werte zurücksetzt??
 
                 #var_X012E_response_received_flag　がほしいです 
+    
+    def check_decompile(self, action_ptr: int):
+        # Prequisities: Check if this function is already known in assembly
+        if action_ptr not in self.rom_cfg.action_addresses:
+            disasm = Disassembler630x(self.emulator.mem.rom_image.rom) # TODO Besser raussuchen? wie bei der read action?
+            disasm.disassemble_reachable(action_ptr, self.rom_cfg.instructions, self.rom_cfg.call_tree)
 
+            pattern_detector = PatternDetector(self.rom_cfg)
+            action_fn_patterns = pattern_detector.detect_patterns(self.rom_cfg.instructions, "action_table_pointer_pattern")
+            for action_fn_name, action_fn_addr in action_fn_patterns.items():
+                self.rom_cfg.add_function_address(action_fn_name, action_fn_addr)
+                self.rom_cfg.action_addresses.add(action_ptr)
 
        

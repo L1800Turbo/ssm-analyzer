@@ -319,6 +319,9 @@ class Emulator6303:
 
             asm_step: MemAccess = func(instr)
 
+            if instr.address == 0xAC80:
+                pass
+
             # TODO hier die steps auswerten?
             # TODO in eigene Log schmeißen direkt
 

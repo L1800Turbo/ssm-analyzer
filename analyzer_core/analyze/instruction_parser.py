@@ -25,19 +25,25 @@ class SavedRegisters:
 logger = logging.getLogger(__name__)
 
 
-class InstructionParser:
+class CalcInstructionParser:
 
     def __init__(self, rom_cfg: RomConfig, emulator: Emulator6303, read_address: int):
-        self.new_calc_address = read_address
+        self.new_calc_address = None
         self.new_calc_register = None
+        self.read_address = read_address
 
         self.emulator = emulator
         self.rom_cfg = rom_cfg
 
-        self.calc_str = ""
+        self.calculations: list[str] = []
 
         # Don't go into functions for now
         self.jsr_level = 0
+
+        self.calc_register_involed = False # TODO aus den ganzen Dingern nen Datentyp machn?
+
+        # If there are branches detected that depend on calculation values
+        self.value_depended_branches = False
 
         self.saved_registers: SavedRegisters = SavedRegisters(
             A=0,
@@ -59,7 +65,14 @@ class InstructionParser:
         self.function_ptrs: dict[int, Callable[[Instruction, MemAccess], None]] = {
             rom_cfg.address_by_name("divide"): self.divide,
             rom_cfg.address_by_name("mul16bit"): self.mul16bit,
+            #rom_cfg.address_by_name("print_lower_value"): lambda instr, access: None,
         }
+
+    def add_function_mocks(self):
+
+        self.function_ptrs[ self.rom_cfg.address_by_name("print_lower_value") ] = lambda instr, access: None
+
+    # --- Handler functions called from outside ---
 
     def do_step(self, instr: Instruction, access: MemAccess):
 
@@ -84,13 +97,45 @@ class InstructionParser:
         self.saved_registers = SavedRegisters(
             A=self.emulator.A,
             B=self.emulator.B,
-            D=(self.emulator.A << 8)|(self.emulator.B ),
+            D=(self.emulator.A << 8)|( self.emulator.B ),
             X=self.emulator.X,
             SP=self.emulator.SP,
             PC=self.emulator.PC
         )
 
-        print(f"Current calculation: {self.calc_str}", flush=True)
+        print(f"Current calculation: {self.calculations}", flush=True)
+
+
+    def set_target_from_var_to_register(self, instr: Instruction, register: str):
+        if instr.target_value == self.read_address:
+            self.new_calc_address = None
+            self.new_calc_register = register
+            self.calc_register_involed = True
+            self.calculations.append("x1") # TODO später noch mehre Variablen unterstützen
+        elif instr.target_value == self.new_calc_address or \
+            (isinstance(self.new_calc_address, (list, tuple)) and instr.target_value in self.new_calc_address):
+            self.new_calc_address = None
+            self.new_calc_register = register
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
+    def set_target_from_register_to_var(self, instr: Instruction, register: str):
+        if self.new_calc_register == register:
+            self.new_calc_address = instr.target_value
+            self.new_calc_register = None
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
+    def set_branch_impact(self):
+        # If in a previous step a register used in calculation changed, mark that branches depend on calculation values
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+
+
+    
+    # --- Functions for subroutines called in scaling functions ---
 
     def divide(self, instr: Instruction, access: MemAccess):
         if self.new_calc_address in self.hex_buffer or self.new_calc_address == self.hex_buffer:
@@ -98,82 +143,193 @@ class InstructionParser:
         isinstance(self.new_calc_address, (list, tuple))
         and any(addr in self.hex_buffer for addr in self.new_calc_address)
     )'''
-            self.calc_str += f" / {self.saved_registers.D}"
+            # Clean up the string so only "+5" remains (remove spaces before, after, and in between)
+            if self.calculations and self.calculations[-1].replace(" ", "") == "+5":
+                self.calculations.pop()  # Remove the +5 before division, it's only for 8bit rounding  
+            
+            self.calculations.append(f"/ {self.saved_registers.D}")
             self.new_calc_register = None
             self.new_calc_address = self.hex_buffer
-    
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
     def mul16bit(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "D" or self.new_calc_register == "B":
-            self.calc_str += f" * {self.saved_registers.X}"
+            self.calculations.append(f" * {self.saved_registers.X}")
             self.new_calc_register = None
             self.new_calc_address = self.hex_buffer
+            self.calc_register_involed = True
         elif self.new_calc_register == "X":
-            self.calc_str += f" * {self.saved_registers.D}"
+            self.calculations.append(f" * {self.saved_registers.D}")
             self.new_calc_register = None
             self.new_calc_address = self.hex_buffer
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
+
+    # --- Instruction handlers ---
 
     def ldaa(self, instr: Instruction, access: MemAccess):
-        if instr.target_value == self.new_calc_address or \
-            (isinstance(self.new_calc_address, (list, tuple)) and instr.target_value in self.new_calc_address):
-            self.new_calc_address = None
-            self.new_calc_register = "A"
+        self.set_target_from_var_to_register(instr, "A")
 
     def ldab(self, instr: Instruction, access: MemAccess):
-        if instr.target_value == self.new_calc_address or \
-            (isinstance(self.new_calc_address, (list, tuple)) and instr.target_value in self.new_calc_address):
-            self.new_calc_address = None
-            self.new_calc_register = "B"
+        self.set_target_from_var_to_register(instr, "B")
     
     def ldd(self, instr: Instruction, access: MemAccess):
-        if instr.target_value == self.new_calc_address or \
-            (isinstance(self.new_calc_address, (list, tuple)) and instr.target_value in self.new_calc_address):
-            self.new_calc_address = None
-            self.new_calc_register = "D"
+        self.set_target_from_var_to_register(instr, "D")
+    
+    def ldx(self, instr: Instruction, access: MemAccess):
+        self.set_target_from_var_to_register(instr, "X")
 
     def staa(self, instr: Instruction, access: MemAccess):
-        if self.new_calc_register == "A":
-            self.new_calc_address = instr.target_value
-            self.new_calc_register = None
+        self.set_target_from_register_to_var(instr, "A")
 
     def stab(self, instr: Instruction, access: MemAccess):
-        if self.new_calc_register == "B":
-            self.new_calc_address = instr.target_value
-            self.new_calc_register = None
+        self.set_target_from_register_to_var(instr, "B")
 
     def std(self, instr: Instruction, access: MemAccess):
-        if self.new_calc_register == "D":
-            self.new_calc_address = instr.target_value
-            self.new_calc_register = None
+        self.set_target_from_register_to_var(instr, "D")
     
     def addd(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "D":
-            self.calc_str += f" + {instr.target_value}"
+            self.calculations.append(f" + {instr.target_value}")
+            self.calc_register_involed = True
+        elif self.new_calc_register == "B":
+            self.calculations.append(f" + {instr.target_value}")
+            self.new_calc_register = "D" # Now we take both registers -> D
+            self.calc_register_involed = True
+        elif self.new_calc_register == "A":
+            raise NotImplementedError("addd handling for A register alone not implemented yet.")
+        else:
+            self.calc_register_involed = False
     
+    def subd(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "D":
+            self.calculations.append(f" - {instr.target_value}")
+            self.calc_register_involed = True
+        elif self.new_calc_register == "B":
+            self.calculations.append(f" + {instr.target_value}")
+            self.new_calc_register = "D" # Now we take both registers -> D
+            self.calc_register_involed = True
+        elif self.new_calc_register == "A":
+            raise NotImplementedError("subd handling for A register alone not implemented yet.")
+        else:
+            self.calc_register_involed = False
+
+    def adca(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "A":
+            self.calculations.append(f" + {instr.target_value} + {self.emulator.flags.C}")
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
+    def subb(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "B":
+            self.calculations.append(f" - {instr.target_value}")
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
+    def negb(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "B":
+            self.calculations.append(" * -1")
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+    
+    def inc(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_address == instr.target_value:
+            self.calculations.append(" + 1")
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
     def mul(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "A":
-            self.calc_str += f" * {self.saved_registers.B}"
+            self.calculations.append(f" * {self.saved_registers.B}")
             self.new_calc_register = "D"
+            self.calc_register_involed = True
         elif self.new_calc_register == "B":
-            self.calc_str += f" * {self.saved_registers.A}"
+            self.calculations.append(f" * {self.saved_registers.A}")
             self.new_calc_register = "D"
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+    
+    def coma(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "A":
+            self.calculations.append("~")
+            self.calc_register_involed = True
+        elif self.new_calc_register == "D":
+            # TODO More a workaround for now
+            self.calculations.append("~(hi)")
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+    
+    def comb(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "B":
+            self.calculations.append("~")
+            self.calc_register_involed = True
+        elif self.new_calc_register == "D":
+            # TODO More a workaround for now
+            if self.calculations[-1] == "~(hi)":
+                self.calculations[-1] = "~" # Just set as if both registers where inverted -> D
+                self.calc_register_involed = True
+            else:
+                raise NotImplementedError("comb on D register not implemented completely, yet.")
+        else:
+            self.calc_register_involed = False
     
     def clr(self, instr: Instruction, access: MemAccess):
         if self.new_calc_address == instr.target_value:
-            self.calc_str += " * 0"
-            self.new_calc_address = None
-            self.new_calc_register = None
+            self.calculations.append(" * 0")
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
 
     def clra(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "A":
-            self.calc_str += " * 0"
-            self.new_calc_register = None
-            self.new_calc_address = None
-    
+            self.calculations.append(" * 0")
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
     def clrb(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "B":
-            self.calc_str += " * 0"
-            self.new_calc_register = None
-            self.new_calc_address = None
+            self.calculations.append(" * 0")
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
+    def cmpa(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "A":
+            raise NotImplementedError("cmpa handling not implemented yet.")
+        else:
+            self.calc_register_involed = False
+    
+    def tst(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_address == instr.target_value:
+            raise NotImplementedError("tst handling not implemented yet.")
+        else:
+            self.calc_register_involed = False
+    
+    def beq(self, instr: Instruction, access: MemAccess):
+        self.set_branch_impact()
+
+    def bcc(self, instr: Instruction, access: MemAccess):
+        self.set_branch_impact()
+
+    def bcs(self, instr: Instruction, access: MemAccess):
+        self.set_branch_impact()
+
+    def bpl(self, instr: Instruction, access: MemAccess):
+        self.set_branch_impact()
+
+    def bra(self, instr: Instruction, access: MemAccess):
+        self.set_branch_impact()
 
     def jsr(self, instr: Instruction, access: MemAccess):
         if instr.target_value is None:

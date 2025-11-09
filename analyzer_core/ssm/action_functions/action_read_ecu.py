@@ -83,8 +83,8 @@ class SsmActionReadEcu(SsmActionHelper):
         self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
         self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
 
-        # Emulate a good SSM answer for a received flag
-        self.emulator.mem.write(self.rom_cfg.address_by_name("response_received_flag"), 0x01)
+        # Indicate that a response has been received
+        SsmEmuHelper.set_ssm_response_received_flag(self.rom_cfg, self.emulator)
 
     def run_post_actions(self):
-        pass
+        return False
