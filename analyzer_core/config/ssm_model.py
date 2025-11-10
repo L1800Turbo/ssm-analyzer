@@ -2,7 +2,7 @@
 # RomIdTableInfo, MasterTableInfo, Label/Scaling Metadaten.
 
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import IntEnum
 import struct
 from typing import Optional, Union
@@ -140,8 +140,13 @@ class MasterTableEntry:
     entry_size = struct.calcsize(struct_format)  # = 12 Bytes
 
     hidden: Optional[bool] = False
+
+    # The upper label as shown on SSM
     upper_label: Optional[str] = ""
     #lower_label: Optional[str] = "" # TODO noch weg, oder? Kommt erst in der Action
+
+    # The actual item's label
+    item_label: Optional[str] = None
 
     action: Optional["SsmAction"] = None
 
@@ -155,20 +160,30 @@ class MasterTableEntry:
 
 
 class ActionType(IntEnum):
+    UNDEFINED = 0
     YEAR = 1
     READ_ADDRESS = 2
     #...
 
 @dataclass
+class RomScalingDefinition:
+    scaling: str
+    precision_decimals: int
+    unit: Optional[str] = None
+    functions: list[str] = field(default_factory=list)
+    
+@dataclass
 class SsmAction:
     action_type: ActionType
 
     upper_label_raw: str
-    lower_label_raw: str
+    lower_label_raw: Optional[str] = None
 
-    ecu_address: Optional[int] = None
-    data_scaling: Optional[str] = None
+    ecu_addresses: list[int] = field(default_factory=list)
+
+    scaling: Optional[RomScalingDefinition] = None
 
 
-    
+
+
     

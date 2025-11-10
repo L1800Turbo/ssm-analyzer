@@ -4,7 +4,7 @@ from typing import List, Optional, Union
 
 from analyzer_core.analyze.repo import PatternRepository
 from analyzer_core.config.byte_interpreter import ByteInterpreter
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo, RomScalingDefinition
 from analyzer_core.disasm.insn_model import Instruction
 
 class RomConfigError(Exception):
@@ -25,6 +25,7 @@ class RomVarDefinition:
 
 # TODO Noch sinnvoll hier:
 # RomVarType enthalt jetzt STIRNGS, aber was ist mit Adressen wie z.B. einer Mastertabelle und sowas? Also alles, was irgendwie "fix" im ROM klebt
+    
 
 
 OFFSET_PIN_ASSIGNMENTS = [
@@ -48,7 +49,7 @@ class RomConfig:
         self.instructions: dict[int, Instruction] = {}
         self.call_tree: dict = {}
         self.action_addresses: set[int] = set()
-        self.scaling_addresses: set[int] = set()
+        self.scaling_addresses: dict[int, RomScalingDefinition] = {}
 
         # Pattern for detection
         self.pattern_repo: PatternRepository

@@ -15,6 +15,6 @@ class SsmActionHelper(ABC):
         pass
 
     @abstractmethod
-    def run_post_actions(self) -> bool:
-        return False
+    def run_post_actions(self):
+        pass
 

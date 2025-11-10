@@ -52,12 +52,11 @@ class SsmActionYear(SsmActionHelper):
         self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_year_print_lower_screen)
 
 
-    def run_post_actions(self) -> bool:
+    def run_post_actions(self):
         '''
         Actions to be run after the YEAR action function has been emulated
         '''
         self.__save_year_model_strings()
-        return False
         
 
     def __save_year_model_strings(self):
@@ -67,15 +66,15 @@ class SsmActionYear(SsmActionHelper):
         
         if self.year_model_upper_str is None or self.year_model_lower_str is None:
             raise EmulationError("YEAR action did not set both year model strings.")
+        
+        if self.mt_entry.action is None:
+            raise RuntimeError("MasterTableEntry action datatype not set before saving YEAR action results.")
 
         self.romid_entry.ssm_year, self.romid_entry.ssm_model = self.__interpret_year_string(self.year_model_upper_str + " " + self.year_model_lower_str)
 
-        self.mt_entry.action = SsmAction(
-            action_type=ActionType.YEAR,
-            upper_label_raw=self.year_model_upper_str,
-            lower_label_raw=self.year_model_lower_str
-        )
-        logger.debug(f"Found RomID entry for YEAR: {self.romid_entry.ssm_year}, MODEL: {self.romid_entry.ssm_model}")
+        self.mt_entry.action.action_type = ActionType.YEAR
+        self.mt_entry.action.lower_label_raw = self.year_model_lower_str
+        logger.debug(f"Found RomID entry for year: {self.romid_entry.ssm_year}, model: {self.romid_entry.ssm_model}")
     
 
     def __interpret_year_string(self, year_model_str: str) -> tuple[int, str]:

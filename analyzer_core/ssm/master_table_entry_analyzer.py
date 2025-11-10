@@ -1,8 +1,9 @@
 import logging
+import re
 from typing import Optional
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb
+from analyzer_core.config.ssm_model import ActionType, CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, SsmAction
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.emu.emulator_6303 import EmulationError, Emulator6303
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
@@ -21,6 +22,16 @@ class MasterTableEntryAnalyzer:
         self.logger = logging.getLogger(__name__)
 
         self._save_labels()
+
+        # Define the entry action datatype
+        if self.mt_entry.upper_label is None:
+            raise EmulationError(f"Upper label for MasterTable entry {self.mt_entry.menu_item_str()} is None.")
+        
+        self.mt_entry.action = SsmAction(
+            action_type=ActionType.UNDEFINED,
+            upper_label_raw=self.mt_entry.upper_label,
+            )
+
         self._run_action_function()
 
     def _save_labels(self):
@@ -32,11 +43,25 @@ class MasterTableEntryAnalyzer:
             if lbl_ptr is None:
                 raise EmulationError(f"Upper label pointer for RomID {self.romid_entry.print_romid_str}")
             
+            if lbl_ptr == 0xFF:
+                return ""
+            
             lbl_addr = lbl_ptr + lbl_idx * 0x10
             lbl_bytes = self.emulator.mem.read_bytes(lbl_addr, 0x10)
             return self.rom_cfg.byte_interpreter.render(lbl_bytes)
+        
+        def item_label(upper_label:str) -> str:
+            '''Extract the item label from e.g.  EX.TEMP  (F23) '''
+            result = re.match(r"\s*(\S+)\s+\((\S+)\)", upper_label)
+            if result:
+                if result.group(2) != self.mt_entry.menu_item_str():
+                    raise ValueError(f"Extracted item label index '{result.group(2)}' does not match MasterTable entry menu item '{self.mt_entry.menu_item_str()}'")
+                return result.group(1)
+            raise ValueError(f"Could not extract item label from upper label '{upper_label}'")
+            
 
         self.mt_entry.upper_label = label_to_mt(self.romid_entry.menuitems_upper_label_pointer, self.mt_entry.upper_label_index)
+        self.mt_entry.item_label = item_label(self.mt_entry.upper_label)
         
         # TODO geht noch nicht, die Geschichte mit dem stack ist noch falsch, wird bei AC8E geladen und dann auch direkt die ACTION
         # if self.mt_entry.lower_label_index != 0xFF:
@@ -75,7 +100,7 @@ class MasterTableEntryAnalyzer:
         action_ptr = self.mt_entry.action_address_rel
 
         # Decompile the action function if not already done
-        self.check_decompile(action_ptr)
+        self.check_decompile_detect_pattern(action_ptr)
 
         # Try to get this action function
         action_fn = self.rom_cfg.get_by_address(action_ptr)
@@ -125,44 +150,21 @@ class MasterTableEntryAnalyzer:
                 SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
 
 
-        
-
+        # Run the function
         self.emulator.set_pc(self.rom_cfg.address_by_name("master_table_info_into_ram"))
         self.emulator.run_function_end(abort_pc=self.rom_cfg.address_by_name("master_table_main_loop"))
 
+        # After running the action function, run any post-actions if defined
         if action_helper is not None:
             action_helper.run_post_actions()
 
-            ssm_rx_values = [0x00, 0xFF]  # Example SSM RX byte values to test
-
-            
             # Run if scaling function should be called, check if value-dependent branches exist which require multiple runs
-            # Do this as long there are simulated ssm rx values to test
-            # TODO Evtl in eigene Funktion oder die Unterklasse auslagern?
             if action_helper.needs_scaling_fn:
                 action_scaling_helper = SsmActionScalingFunction(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
-                action_scaling_helper.add_function_mocks()
+                action_scaling_helper.run_function()
 
-                additional_run_needed = True
-                while additional_run_needed and len(ssm_rx_values) > 0:
-                    self.emulator.mem.write(self.rom_cfg.address_by_name("ssm_rx_byte_2"), ssm_rx_values.pop(0))
-
-                    # Re-Set the SSM response received flag before running the scaling function again
-                    action_scaling_helper.emulate_receive_ssm_response()
-
-                    # Re-Set instruction parser
-                    action_scaling_helper.set_instrcution_parser()
-
-                    self.emulator.set_pc(self.rom_cfg.address_by_name("mastertable_run_scaling_fn"))
-                    self.emulator.run_function_end(abort_pc=self.rom_cfg.address_by_name("master_table_main_loop"))
-                    additional_run_needed = action_scaling_helper.run_post_actions()
-
-                    # TODO den zahlen-aufräum-kram dann nicht mehr in den post_actions, sondern in einer eigenen funktion hier?
-                    # TODO Das mit mehreren Durchläufen funktioniert noch nicht. Muss das read nochmal weil der Werte zurücksetzt??
-
-                #var_X012E_response_received_flag　がほしいです 
     
-    def check_decompile(self, action_ptr: int):
+    def check_decompile_detect_pattern(self, action_ptr: int):
         # Prequisities: Check if this function is already known in assembly
         if action_ptr not in self.rom_cfg.action_addresses:
             disasm = Disassembler630x(self.emulator.mem.rom_image.rom) # TODO Besser raussuchen? wie bei der read action?

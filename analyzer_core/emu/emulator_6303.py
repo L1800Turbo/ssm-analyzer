@@ -188,6 +188,11 @@ class Emulator6303:
         v8 = value & 0xFF
         self.flags.Z = 1 if v8 == 0 else 0
         self.flags.N = 1 if (v8 & 0x80) else 0
+    
+    def _set_ZN_16(self, value: int) -> None:
+        v16 = value & 0xFFFF
+        self.flags.Z = 1 if v16 == 0 else 0
+        self.flags.N = 1 if (v16 & 0x8000) else 0
 
     # --- Instruction helpers (subset; ausbaufähig) ---
     def _AND8(self, lhs: int, rhs: int) -> int:
@@ -319,7 +324,7 @@ class Emulator6303:
 
             asm_step: MemAccess = func(instr)
 
-            if instr.address == 0xAC80:
+            if instr.address == 0x3385:
                 pass
 
             # TODO hier die steps auswerten?
@@ -490,7 +495,7 @@ class Emulator6303:
         
         self.A = (ma.value >> 8) & 0xFF
         self.B = ma.value & 0xFF
-        self._set_ZN_8(ma.value)
+        self._set_ZN_16(ma.value)
         self.flags.V = 0
 
         self.PC += instr.size
@@ -1012,7 +1017,7 @@ class Emulator6303:
         if ma.value is None:
             raise ValueError("Invalid memory access")
         self.B = self._SUB8(self.B, ma.value)
-        self._set_ZN_8(self.B)
+        self._set_ZN_16(self.B)
         
         self.PC += instr.size
         ma.next_instr_addr=self.PC
@@ -1025,7 +1030,7 @@ class Emulator6303:
             raise ValueError("Invalid memory access")
         d = ((self.A << 8) | self.B) & 0xFFFF
         result = (d + ma.value) & 0xFFFF
-        self._set_ZN_8(result)
+        self._set_ZN_16(result)
         self.flags.C = 1 if d + ma.value > 0xFFFF else 0
         self.flags.V = 1 if ((~(d ^ ma.value)) & (d ^ result) & 0x8000) != 0 else 0
         self.A = (result >> 8) & 0xFF
@@ -1044,7 +1049,7 @@ class Emulator6303:
             raise ValueError("Invalid memory access")
         d = ((self.A << 8) | self.B) & 0xFFFF
         result = (d - ma.value) & 0xFFFF
-        self._set_ZN_8(result)
+        self._set_ZN_16(result)
         self.flags.C = 1 if d < ma.value else 0
         self.flags.V = 1 if ((d ^ ma.value) & (d ^ result) & 0x8000) != 0 else 0
         self.A = (result >> 8) & 0xFF

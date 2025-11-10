@@ -45,6 +45,10 @@ class SsmActionReadEcu(SsmActionHelper):
 
             self.write_cmds.append(ssm_tx_bytes)
 
+            if self.mt_entry.action is None:
+                raise RuntimeError("MasterTableEntry action datatype not set before saving READ_ADDRESS action results.")
+            self.mt_entry.action.ecu_addresses.append((ssm_tx_bytes[1] << 8) | ssm_tx_bytes[2])
+
             # TODO landen hier auch die TX_bytes von den BARO.P usw?
 
             #ssm_rx_bytes = mem.read_bytes(self.rom_cfg.address_by_name("ssm_rx_byte_0"), 3, allow_hooks=False)
@@ -87,4 +91,4 @@ class SsmActionReadEcu(SsmActionHelper):
         SsmEmuHelper.set_ssm_response_received_flag(self.rom_cfg, self.emulator)
 
     def run_post_actions(self):
-        return False
+        pass

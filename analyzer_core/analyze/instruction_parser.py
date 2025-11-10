@@ -36,6 +36,7 @@ class CalcInstructionParser:
         self.rom_cfg = rom_cfg
 
         self.calculations: list[str] = []
+        self.conditions: list[list[str]] = []
 
         # Don't go into functions for now
         self.jsr_level = 0
@@ -45,7 +46,7 @@ class CalcInstructionParser:
         # If there are branches detected that depend on calculation values
         self.value_depended_branches = False
 
-        self.saved_registers: SavedRegisters = SavedRegisters(
+        self.saved_registers = SavedRegisters(
             A=0,
             B=0,
             D=0,
@@ -53,6 +54,7 @@ class CalcInstructionParser:
             SP=0,
             PC=0
         )
+        self.last_instruction: Instruction | None = None
 
         # Buffer that is used by SSM for calculations or final printout
         self.hex_buffer = [
@@ -69,8 +71,14 @@ class CalcInstructionParser:
         }
 
     def add_function_mocks(self):
-
         self.function_ptrs[ self.rom_cfg.address_by_name("print_lower_value") ] = lambda instr, access: None
+    
+    def __is_address_match(self, needle, haystack):
+        if needle == haystack:
+            return True
+        if isinstance(haystack, (list, tuple)):
+            return needle in haystack
+        return False
 
     # --- Handler functions called from outside ---
 
@@ -102,6 +110,7 @@ class CalcInstructionParser:
             SP=self.emulator.SP,
             PC=self.emulator.PC
         )
+        self.last_instruction = instr
 
         print(f"Current calculation: {self.calculations}", flush=True)
 
@@ -112,8 +121,12 @@ class CalcInstructionParser:
             self.new_calc_register = register
             self.calc_register_involed = True
             self.calculations.append("x1") # TODO später noch mehre Variablen unterstützen
-        elif instr.target_value == self.new_calc_address or \
-            (isinstance(self.new_calc_address, (list, tuple)) and instr.target_value in self.new_calc_address):
+        elif self.new_calc_register == register:
+            # TODO überschreibt
+            logger.warning(f"Overwriting calculation register {register} at instruction 0x{instr.address:04X}")
+            self.calculations.append(str(instr.target_value))
+            self.calc_register_involed = True
+        elif self.__is_address_match(instr.target_value, self.new_calc_address):
             self.new_calc_address = None
             self.new_calc_register = register
             self.calc_register_involed = True
@@ -125,13 +138,24 @@ class CalcInstructionParser:
             self.new_calc_address = instr.target_value
             self.new_calc_register = None
             self.calc_register_involed = True
+        elif self.__is_address_match(instr.target_value, self.new_calc_address):
+            # In this case the original value would simply get overwritten
+            # Happens on e.g. BARO.P 0x3375 IMPREZA96
+            self.new_calc_address = instr.target_value
+            self.new_calc_register = None
+            self.calc_register_involed = True
+            #self.calculations.clear()
+            self.calculations.append(str(self.saved_registers.D))
         else:
             self.calc_register_involed = False
 
-    def set_branch_impact(self):
+   # def set_branch_impact(self):
         # If in a previous step a register used in calculation changed, mark that branches depend on calculation values
-        if self.calc_register_involed:
-            self.value_depended_branches = True
+     #   if self.calc_register_involed:
+    #        self.value_depended_branches = True
+
+        # TODO: Hier muss dann noch implementiert werden, welche funktion bis hier hin gilt? Oder für die jeweilige funktion wie bpl?
+        # also wenn (xy) > 0 ?
 
 
     
@@ -317,19 +341,40 @@ class CalcInstructionParser:
             self.calc_register_involed = False
     
     def beq(self, instr: Instruction, access: MemAccess):
-        self.set_branch_impact()
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+            self.calculations.append(" if == 0")
+    
+    def bne(self, instr: Instruction, access: MemAccess):
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+            self.calculations.append(" if != 0")
 
     def bcc(self, instr: Instruction, access: MemAccess):
-        self.set_branch_impact()
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+            self.calculations.append(" if >= 0")
+            self.conditions.append(self.calculations.copy())
 
     def bcs(self, instr: Instruction, access: MemAccess):
-        self.set_branch_impact()
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+            self.calculations.append(" if < 0")
 
     def bpl(self, instr: Instruction, access: MemAccess):
-        self.set_branch_impact()
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+            self.calculations.append(" if >= 0")
+
+    def bmi(self, instr: Instruction, access: MemAccess):
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+            self.calculations.append(" if < 0")
 
     def bra(self, instr: Instruction, access: MemAccess):
-        self.set_branch_impact()
+        #self.set_branch_impact()
+        #self.calculations.append(" if True")
+        pass
 
     def jsr(self, instr: Instruction, access: MemAccess):
         if instr.target_value is None:
