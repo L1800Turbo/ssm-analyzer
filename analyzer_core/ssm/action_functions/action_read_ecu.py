@@ -28,7 +28,7 @@ class SsmActionReadEcu(SsmActionHelper):
 
         self.write_cmds = []
 
-    def add_function_mocks(self):
+    def _add_function_mocks(self):
         def mock_skip_action(em: Emulator6303):
             # Just return from the function
             em.mock_return()

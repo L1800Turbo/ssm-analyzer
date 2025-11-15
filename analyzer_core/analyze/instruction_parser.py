@@ -1,8 +1,12 @@
 
 
 from dataclasses import dataclass
+from enum import IntEnum
 import logging
-
+from typing import Optional
+import sympy as sp
+from sympy.logic.boolalg import Boolean
+from sympy.core.relational import Relational
 from pyparsing import Callable
 from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.disasm.insn_model import Instruction
@@ -12,6 +16,15 @@ from analyzer_core.emu.tracing import MemAccess
 
 class ParserError(Exception):
     pass
+
+class TwoStepComplement(IntEnum):
+    NONE = 0
+    INVERT = 1  # ~ x
+    INVERT_HI_BYTE = 2 # ~ on high byte only -> only supported if low byte will also be ~
+
+class TwoStepDivide(IntEnum):
+    NONE = 0
+    ROUND_FOR_DIVIDATION = 1  # +5 before division for 8bit rounding
 
 @dataclass
 class SavedRegisters:
@@ -35,8 +48,33 @@ class CalcInstructionParser:
         self.emulator = emulator
         self.rom_cfg = rom_cfg
 
-        self.calculations: list[str] = []
-        self.conditions: list[list[str]] = []
+        # Buffer that is used by SSM for calculations or final printout
+        self.hex_buffer = [
+            self.rom_cfg.address_by_name("print_hex_buffer_0"),
+            self.rom_cfg.address_by_name("print_hex_buffer_1"),
+            self.rom_cfg.address_by_name("print_hex_buffer_2"),
+        ]
+
+        # Relevant addresses for calculation
+        self.function_ptrs: dict[int, Callable[[Instruction, MemAccess], None]] = {
+            rom_cfg.address_by_name("divide"): self.divide,
+            rom_cfg.address_by_name("mul16bit"): self.mul16bit,
+            #rom_cfg.address_by_name("print_lower_value"): lambda instr, access: None,
+        }
+
+        # TODO Hardcoded auf eins zunächjst
+        self.symbol = sp.Symbol("x1")
+
+        self.init_new_instruction()
+
+    def init_new_instruction(self):
+        self.raw_calculations: list[str] = []
+        #self.conditions: list[list[str]] = []
+
+        self.current_expr: Optional[sp.Expr] = None
+        self.conditions: list[Relational] = []
+        self.multi_step_complement: TwoStepComplement = TwoStepComplement.NONE
+        self.multi_step_divide: TwoStepDivide = TwoStepDivide.NONE
 
         # Don't go into functions for now
         self.jsr_level = 0
@@ -55,20 +93,6 @@ class CalcInstructionParser:
             PC=0
         )
         self.last_instruction: Instruction | None = None
-
-        # Buffer that is used by SSM for calculations or final printout
-        self.hex_buffer = [
-            self.rom_cfg.address_by_name("print_hex_buffer_0"),
-            self.rom_cfg.address_by_name("print_hex_buffer_1"),
-            self.rom_cfg.address_by_name("print_hex_buffer_2"),
-        ]
-
-        # Relevant addresses for calculation
-        self.function_ptrs: dict[int, Callable[[Instruction, MemAccess], None]] = {
-            rom_cfg.address_by_name("divide"): self.divide,
-            rom_cfg.address_by_name("mul16bit"): self.mul16bit,
-            #rom_cfg.address_by_name("print_lower_value"): lambda instr, access: None,
-        }
 
     def add_function_mocks(self):
         self.function_ptrs[ self.rom_cfg.address_by_name("print_lower_value") ] = lambda instr, access: None
@@ -95,12 +119,20 @@ class CalcInstructionParser:
         
         if self.jsr_level > 0:
             return
+        
+        old_multi_step_calc = self.multi_step_complement
 
         try:
             func = getattr(self, instr.mnemonic)
             func(instr, access)
         except AttributeError: # For unknown functions
                 raise ParserError(f"Unknown instruction: {instr.mnemonic} at address 0x{instr.address:04X}")
+        
+        # Did we add calculation steps but forgot about the multi step calculations?
+        if old_multi_step_calc != TwoStepComplement.NONE and \
+           old_multi_step_calc == self.multi_step_complement and \
+           self.calc_register_involed:
+            raise ParserError(f"Calculation step not handled for instruction {instr.mnemonic} at address 0x{instr.address:04X}")
         
         self.saved_registers = SavedRegisters(
             A=self.emulator.A,
@@ -112,7 +144,7 @@ class CalcInstructionParser:
         )
         self.last_instruction = instr
 
-        print(f"Current calculation: {self.calculations}", flush=True)
+        #print(f"Current calculation: {self.calculations}", flush=True)
 
 
     def set_target_from_var_to_register(self, instr: Instruction, register: str):
@@ -120,11 +152,15 @@ class CalcInstructionParser:
             self.new_calc_address = None
             self.new_calc_register = register
             self.calc_register_involed = True
-            self.calculations.append("x1") # TODO später noch mehre Variablen unterstützen
+            self.raw_calculations.append("x1") # TODO später noch mehre Variablen unterstützen
+            self.current_expr = self.symbol
+
         elif self.new_calc_register == register:
             # TODO überschreibt
             logger.warning(f"Overwriting calculation register {register} at instruction 0x{instr.address:04X}")
-            self.calculations.append(str(instr.target_value))
+            self.raw_calculations.append(str(instr.target_value))
+            self.current_expr = sp.Integer(instr.target_value)
+
             self.calc_register_involed = True
         elif self.__is_address_match(instr.target_value, self.new_calc_address):
             self.new_calc_address = None
@@ -145,9 +181,20 @@ class CalcInstructionParser:
             self.new_calc_register = None
             self.calc_register_involed = True
             #self.calculations.clear()
-            self.calculations.append(str(self.saved_registers.D))
+            self.raw_calculations.append(str(self.saved_registers.D))
+            self.current_expr = sp.Integer(self.saved_registers.D)
         else:
             self.calc_register_involed = False
+    
+    def branch_condition_met(self, instr: Instruction, access: MemAccess) -> bool:
+        ''' Return if the current branch condition is met by checking the next instruction address '''
+        if instr.is_branch:
+            if instr.target_value == access.next_instr_addr:
+                return True
+            else:
+                return False
+        else:
+            raise ParserError(f"Instruction at 0x{instr.address:04X} is not a branch instruction.")
 
    # def set_branch_impact(self):
         # If in a previous step a register used in calculation changed, mark that branches depend on calculation values
@@ -168,10 +215,16 @@ class CalcInstructionParser:
         and any(addr in self.hex_buffer for addr in self.new_calc_address)
     )'''
             # Clean up the string so only "+5" remains (remove spaces before, after, and in between)
-            if self.calculations and self.calculations[-1].replace(" ", "") == "+5":
-                self.calculations.pop()  # Remove the +5 before division, it's only for 8bit rounding  
+            if self.raw_calculations and self.raw_calculations[-1].replace(" ", "") == "+5":
+                self.raw_calculations.pop()  # Remove the +5 before division, it's only for 8bit rounding  
+            self.raw_calculations.append(f"/ {self.saved_registers.D}")
+
+            # If we just added a +5 for rounding, remove it from the expression
+            if self.multi_step_divide == TwoStepDivide.ROUND_FOR_DIVIDATION:
+                self.current_expr = self.current_expr - 5  # type: ignore
+                self.multi_step_divide = TwoStepDivide.NONE
+            self.current_expr = self.current_expr / self.saved_registers.D # type: ignore
             
-            self.calculations.append(f"/ {self.saved_registers.D}")
             self.new_calc_register = None
             self.new_calc_address = self.hex_buffer
             self.calc_register_involed = True
@@ -180,12 +233,16 @@ class CalcInstructionParser:
 
     def mul16bit(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "D" or self.new_calc_register == "B":
-            self.calculations.append(f" * {self.saved_registers.X}")
+            self.raw_calculations.append(f" * {self.saved_registers.X}")
+            self.current_expr = self.current_expr * self.saved_registers.X # type: ignore
+
             self.new_calc_register = None
             self.new_calc_address = self.hex_buffer
             self.calc_register_involed = True
         elif self.new_calc_register == "X":
-            self.calculations.append(f" * {self.saved_registers.D}")
+            self.raw_calculations.append(f" * {self.saved_registers.D}")
+            self.current_expr = self.current_expr * self.saved_registers.D # type: ignore
+
             self.new_calc_register = None
             self.new_calc_address = self.hex_buffer
             self.calc_register_involed = True
@@ -218,10 +275,24 @@ class CalcInstructionParser:
     
     def addd(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "D":
-            self.calculations.append(f" + {instr.target_value}")
+            self.raw_calculations.append(f" + {instr.target_value}")
+
+            if self.multi_step_complement == TwoStepComplement.INVERT and instr.target_value == 1:
+                # If we had an invert before, we need to adjust the calculation
+                # ~(x) + 1  == -x
+                self.current_expr = -self.current_expr # type: ignore
+                self.multi_step_complement = TwoStepComplement.NONE
+            else:
+                self.current_expr = self.current_expr + instr.target_value # type: ignore
+                if instr.target_value == 5:
+                    # If we just added one, reset any multi step calc
+                    self.multi_step_divide = TwoStepDivide.ROUND_FOR_DIVIDATION
+
             self.calc_register_involed = True
         elif self.new_calc_register == "B":
-            self.calculations.append(f" + {instr.target_value}")
+            self.raw_calculations.append(f" + {instr.target_value}")
+            self.current_expr = self.current_expr + instr.target_value # type: ignore
+
             self.new_calc_register = "D" # Now we take both registers -> D
             self.calc_register_involed = True
         elif self.new_calc_register == "A":
@@ -231,10 +302,13 @@ class CalcInstructionParser:
     
     def subd(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "D":
-            self.calculations.append(f" - {instr.target_value}")
+            self.raw_calculations.append(f" - {instr.target_value}")
+            self.current_expr = self.current_expr - instr.target_value # type: ignore
+
             self.calc_register_involed = True
         elif self.new_calc_register == "B":
-            self.calculations.append(f" + {instr.target_value}")
+            self.raw_calculations.append(f" - {instr.target_value}")
+            self.current_expr = self.current_expr - instr.target_value # type: ignore
             self.new_calc_register = "D" # Now we take both registers -> D
             self.calc_register_involed = True
         elif self.new_calc_register == "A":
@@ -244,39 +318,58 @@ class CalcInstructionParser:
 
     def adca(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "A":
-            self.calculations.append(f" + {instr.target_value} + {self.emulator.flags.C}")
+            self.raw_calculations.append(f" + {instr.target_value} + {self.emulator.flags.C}")
+            self.current_expr = self.current_expr + instr.target_value + self.emulator.flags.C # type: ignore
+            
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
 
     def subb(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "B":
-            self.calculations.append(f" - {instr.target_value}")
+            self.raw_calculations.append(f" - {instr.target_value}")
+            self.current_expr = self.current_expr - instr.target_value # type: ignore
+
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
 
     def negb(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "B":
-            self.calculations.append(" * -1")
+            self.raw_calculations.append(" * -1")
+            self.current_expr = self.current_expr * -1 # type: ignore
+
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
     
     def inc(self, instr: Instruction, access: MemAccess):
         if self.new_calc_address == instr.target_value:
-            self.calculations.append(" + 1")
+            self.raw_calculations.append(" + 1")
+
+            if self.multi_step_complement == TwoStepComplement.INVERT:
+                # If we had an invert before, we need to adjust the calculation
+                # ~(x) + 1  == -x
+                self.current_expr = -self.current_expr # type: ignore
+                self.multi_step_complement = TwoStepComplement.NONE
+            else:
+                self.current_expr = self.current_expr + 1 # type: ignore
+
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
 
     def mul(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "A":
-            self.calculations.append(f" * {self.saved_registers.B}")
+            self.raw_calculations.append(f" * {self.saved_registers.B}")
+            self.current_expr = self.current_expr * self.saved_registers.B # type: ignore
+
             self.new_calc_register = "D"
             self.calc_register_involed = True
         elif self.new_calc_register == "B":
-            self.calculations.append(f" * {self.saved_registers.A}")
+            self.raw_calculations.append(f" * {self.saved_registers.A}")
+            self.current_expr = self.current_expr * self.saved_registers.A # type: ignore
+
             self.new_calc_register = "D"
             self.calc_register_involed = True
         else:
@@ -284,23 +377,34 @@ class CalcInstructionParser:
     
     def coma(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "A":
-            self.calculations.append("~")
+            self.raw_calculations.append("~")
+
+            
+            #if self.multi_step_calc == TwoStepCalculation.INVERT_HI_BYTE:
+            # Set to invert, hi byte doesn't matter to ask
+            self.multi_step_complement = TwoStepComplement.INVERT
             self.calc_register_involed = True
         elif self.new_calc_register == "D":
             # TODO More a workaround for now
-            self.calculations.append("~(hi)")
+            self.raw_calculations.append("~(hi)")
+            self.multi_step_complement = TwoStepComplement.INVERT_HI_BYTE
+
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
     
     def comb(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "B":
-            self.calculations.append("~")
+            self.raw_calculations.append("~")
+            self.multi_step_complement = TwoStepComplement.INVERT
+
             self.calc_register_involed = True
         elif self.new_calc_register == "D":
+            # Set to invert, hi byte doesn't matter to ask
+            self.multi_step_complement = TwoStepComplement.INVERT
             # TODO More a workaround for now
-            if self.calculations[-1] == "~(hi)":
-                self.calculations[-1] = "~" # Just set as if both registers where inverted -> D
+            if self.raw_calculations[-1] == "~(hi)":
+                self.raw_calculations[-1] = "~" # Just set as if both registers where inverted -> D
                 self.calc_register_involed = True
             else:
                 raise NotImplementedError("comb on D register not implemented completely, yet.")
@@ -309,21 +413,27 @@ class CalcInstructionParser:
     
     def clr(self, instr: Instruction, access: MemAccess):
         if self.new_calc_address == instr.target_value:
-            self.calculations.append(" * 0")
+            self.raw_calculations.append(" * 0")
+            self.current_expr = self.current_expr * 0 # type: ignore
+            
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
 
     def clra(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "A":
-            self.calculations.append(" * 0")
+            self.raw_calculations.append(" * 0")
+            self.current_expr = self.current_expr * 0 # type: ignore
+
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
 
     def clrb(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "B":
-            self.calculations.append(" * 0")
+            self.raw_calculations.append(" * 0")
+            self.current_expr = self.current_expr * 0 # type: ignore
+
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
@@ -343,33 +453,70 @@ class CalcInstructionParser:
     def beq(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
-            self.calculations.append(" if == 0")
+            if self.branch_condition_met(instr, access):
+                self.raw_calculations.append(" if == 0")
+                cond = sp.Eq(self.current_expr, 0)
+            else:
+                self.raw_calculations.append(" if != 0")
+                cond = sp.Ne(self.current_expr, 0)
+            self.conditions.append(cond)
     
     def bne(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
-            self.calculations.append(" if != 0")
+            if self.branch_condition_met(instr, access):
+                self.raw_calculations.append(" if != 0")
+                cond = sp.Ne(self.current_expr, 0)
+            else:
+                self.raw_calculations.append(" if == 0")
+                cond = sp.Eq(self.current_expr, 0)
+            self.conditions.append(cond)
 
     def bcc(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
-            self.calculations.append(" if >= 0")
-            self.conditions.append(self.calculations.copy())
+            if self.branch_condition_met(instr, access):
+                self.raw_calculations.append(" if >= 0")
+                cond = sp.Ge(self.current_expr, 0)
+            else:
+                self.raw_calculations.append(" if < 0")
+                cond = sp.Lt(self.current_expr, 0)
+            self.conditions.append(cond)
+            
+            #self.conditions.append(self.calculations.copy())
 
     def bcs(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
-            self.calculations.append(" if < 0")
+            if self.branch_condition_met(instr, access):
+                self.raw_calculations.append(" if < 0")
+                cond = sp.Lt(self.current_expr, 0)
+            else:
+                self.raw_calculations.append(" if >= 0")
+                cond = sp.Ge(self.current_expr, 0)
+            self.conditions.append(cond)
 
     def bpl(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
-            self.calculations.append(" if >= 0")
+            if self.branch_condition_met(instr, access):
+                self.raw_calculations.append(" if >= 0")
+                cond = sp.Ge(self.current_expr, 0)
+            else:
+                self.raw_calculations.append(" if < 0")
+                cond = sp.Lt(self.current_expr, 0)
+            self.conditions.append(cond)
 
     def bmi(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
-            self.calculations.append(" if < 0")
+            if self.branch_condition_met(instr, access):
+                self.raw_calculations.append(" if < 0")
+                cond = sp.Lt(self.current_expr, 0)
+            else:
+                self.raw_calculations.append(" if >= 0")
+                cond = sp.Ge(self.current_expr, 0)
+            self.conditions.append(cond)
 
     def bra(self, instr: Instruction, access: MemAccess):
         #self.set_branch_impact()
@@ -386,3 +533,22 @@ class CalcInstructionParser:
             logger.debug(f"Skipping JSR to 0x{instr.target_value:04X} at address 0x{instr.address:04X}")
 
         self.jsr_level += 1
+
+
+    # --- Calculation helpers ---
+    def solve_jump_conditions(self) -> set[int]:
+        '''
+        Solve the jump conditions collected during parsing
+        '''
+        solved_values = set()
+        for cond in self.conditions:
+            # Solve each condition with 0 to the symbol TODO zunächst nur ein Symbol x1
+            eq = sp.Eq(cond.lhs, 0)
+            sol = sp.solve(eq, self.symbol)
+            #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
+
+            # Some equations solve by <, some by <= and vise versa, so we test both sides of the solution
+            for s in sol:
+                for off in (-1, +1):
+                    solved_values.add(int(max(0, min(255, s + off))))
+        return solved_values

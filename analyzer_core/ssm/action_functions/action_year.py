@@ -29,7 +29,7 @@ class SsmActionYear(SsmActionHelper):
         self.year_model_upper_str: Optional[str] = None
         self.year_model_lower_str: Optional[str] = None
 
-    def add_function_mocks(self):
+    def _add_function_mocks(self):
         '''
         Add the necessary function mocks for YEAR action
         '''

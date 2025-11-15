@@ -11,7 +11,7 @@ class SsmActionHelper(ABC):
         self.emulator = emulator
 
     @abstractmethod
-    def add_function_mocks(self):
+    def _add_function_mocks(self):
         pass
 
     @abstractmethod

@@ -118,7 +118,7 @@ class MasterTableEntryAnalyzer:
         if action_fn.name == "action_year":
             # Run the YEAR interpreter
             action_helper = SsmActionYear(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
-            action_helper.add_function_mocks()
+            action_helper._add_function_mocks()
 
             # TODO Wird da was gemacht??
             SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
@@ -126,7 +126,7 @@ class MasterTableEntryAnalyzer:
         elif action_fn.name == "action_read_ecu":
             from analyzer_core.ssm.action_functions.action_read_ecu import SsmActionReadEcu
             action_helper = SsmActionReadEcu(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
-            action_helper.add_function_mocks()
+            action_helper._add_function_mocks()
 
             #SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
 

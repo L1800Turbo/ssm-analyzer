@@ -44,6 +44,10 @@ class Instruction:
     @property
     def is_branch_rel16(self) -> bool:
         return self.mnemonic.lower() in INSTRUCTION_GROUPS["branch_rel16"]
+    
+    @property
+    def is_branch(self) -> bool:
+        return self.is_branch_rel8 or self.is_branch_rel16
 
     @property
     def is_return(self) -> bool:
