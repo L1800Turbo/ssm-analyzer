@@ -47,7 +47,13 @@ class SsmActionScalingFunction(SsmActionHelper):
         self._set_unit()
 
         self._add_function_mocks()
-        self._init_instruction_parser()
+        #self._init_instruction_parser()
+
+        self.instr_parser = CalcInstructionParser(self.rom_cfg, self.emulator, read_address=self.rom_cfg.address_by_name("ssm_rx_byte_2"))
+        # Add function mocks where we need information from the disassembly as variable names could be unknown before
+        self.instr_parser.add_function_mocks()
+
+        self.instr_parser.init_new_instruction()
 
         # Add function mocks where we need information from the disassembly as variable names could be unknown before
         ###self.instr_parser.add_function_mocks()
@@ -57,10 +63,10 @@ class SsmActionScalingFunction(SsmActionHelper):
     # TODO als Alternative nur den INdex nehmen und direkt aqus der Tabelle die Adresse holen?
     # Aber was wäre mit BARO.P usw?
 
-    def _init_instruction_parser(self):
-        self.instr_parser = CalcInstructionParser(self.rom_cfg, self.emulator, read_address=self.rom_cfg.address_by_name("ssm_rx_byte_2"))
-        # Add function mocks where we need information from the disassembly as variable names could be unknown before
-        self.instr_parser.add_function_mocks()
+    # def _init_instruction_parser(self):
+    #     self.instr_parser = CalcInstructionParser(self.rom_cfg, self.emulator, read_address=self.rom_cfg.address_by_name("ssm_rx_byte_2"))
+    #     # Add function mocks where we need information from the disassembly as variable names could be unknown before
+    #     self.instr_parser.add_function_mocks()
 
 
     def _ensure_scaling_disassembly(self):
@@ -103,11 +109,11 @@ class SsmActionScalingFunction(SsmActionHelper):
             self.emulator.add_logger("scaling_fn_ssm_rx_logger", self._trace_rx_value_calculation)
 
         def hook_pre_scaling_function(em: Emulator6303):
-            logger.debug(f"hook_pre_scaling_function at {self.scaling_fn_ptr:04X}")
+            #logger.debug(f"hook_pre_scaling_function at {self.scaling_fn_ptr:04X}")
             self.emulator.hooks.add_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
         
         def hook_post_scaling_function(em: Emulator6303, access):
-            print(f"hook_post_scaling_function at {self.scaling_fn_ptr:04X}", flush=True)
+            #print(f"hook_post_scaling_function at {self.scaling_fn_ptr:04X}", flush=True)
             self.emulator.hooks.remove_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
             self.emulator.remove_logger("scaling_fn_ssm_rx_logger")
 
@@ -134,17 +140,10 @@ class SsmActionScalingFunction(SsmActionHelper):
                 self.rom_cfg.scaling_addresses[self.scaling_fn_ptr].functions.append(self.mt_entry.item_label)
             return
         
-        #sympy_x = sp.Symbol("x1")
         ssm_inputs: List[int] = [0]   # initial TX values to test
         seen_samples: set[int] = set()
-        #per_input_expr: dict[int, sp.Expr] = {}
 
         eq_pieces: list[tuple[sp.Expr | None, Boolean]] = []
-
-        #expressions: list = [] #sp.Expr
-        #conditions: list[Boolean] = []
-
-        #raw_zeugs: list[list[str]] = []
 
         while ssm_inputs:
             rx_test_value = ssm_inputs.pop(0)
@@ -153,7 +152,8 @@ class SsmActionScalingFunction(SsmActionHelper):
             # Reset Emulator/Parser
             self.emulator.mem.write(self.rom_cfg.address_by_name("ssm_rx_byte_2"), rx_test_value)
             self._emulate_receive_ssm_response()
-            self._init_instruction_parser() #  TODO das neu initialiseren dann nicht mit fischem objekt sondern der init-funktiopn dadrin?
+            #self._init_instruction_parser() #  TODO das neu initialiseren dann nicht mit fischem objekt sondern der init-funktiopn dadrin?
+            self.instr_parser.init_new_instruction()
 
             # Run the emulation
             self.emulator.set_pc(self.rom_cfg.address_by_name("mastertable_run_scaling_fn"))
@@ -173,23 +173,15 @@ class SsmActionScalingFunction(SsmActionHelper):
                 self.instr_parser.current_expr = -self.instr_parser.current_expr # type: ignore
             
 
-            print(f"{rx_test_value}  Expr: {self.instr_parser.current_expr}  guard: {sp.And(*self.instr_parser.conditions)}", flush=True)
+            #print(f"{rx_test_value}  Expr: {self.instr_parser.current_expr}  guard: {sp.And(*self.instr_parser.conditions)}", flush=True)
 
             # Get jump conditions from guards to find new test inputs
             for value in self.instr_parser.solve_jump_conditions():
                 if value not in seen_samples and value not in ssm_inputs:
                     ssm_inputs.append(value)
-                    print(f"    Adding new test input value: {value}", flush=True)
+                    #print(f"    Adding new test input value: {value}", flush=True)
 
             eq_pieces.append((self.instr_parser.current_expr, sp.And(*self.instr_parser.conditions)))
-
-            # TODO eigener Datentyp? in den PArser?
-            #expressions.append(self.instr_parser.current_expr)
-            #conditions.append(sp.And(*self.instr_parser.conditions))
-
-            #raw_zeugs.append(self.instr_parser.raw_calculations.copy())
-
-        #pieces = [(expr, cond) for expr, cond in zip(expressions, conditions)]
 
         # Remove duplicates with same condition
         eq_pieces = list(dict.fromkeys(eq_pieces))
@@ -213,324 +205,8 @@ class SsmActionScalingFunction(SsmActionHelper):
         print("#########################################", flush=True)
 
 
-
-            
-
-
-
-
-
-        #     if self.data_scaling is None:
-        #         raise EmulationError("Scaling function did not produce a scaling expression.")
-            
-        
-
-        #     # If there were branches in the assembly depending on calculation values, another run might be needed
-        #     if self.instr_parser.value_depended_branches:
-        #         logger.debug("Detected value-dependent branch during emulation.")
-
-        #         bounds = self._extract_piecewise_boundaries(self.data_scaling, sympy_x)
-        #         news = []
-        #         for b in bounds:
-        #             for off in (-1, +1):
-        #                 val = int(max(0, min(255, b + off)))
-        #                 if val not in seen_samples and val not in ssm_inputs:
-        #                     news.append(val)
-        #                     seen_samples.add(val)
-        #         if news:
-        #             logger.debug(f"Discovered new boundary samples: {news}")
-        #             ssm_inputs.extend(news)
-        
-        # # Get final scaling by combining all piecewise parts TODO hier unten ja schon mal gar nicht?
-        # if self.decimal_places is None:
-        #     raise EmulationError("Decimal places not determined after scaling function execution.")
-
-        # print(f"Alle Scalings: {self.data_scaling}")
-        # final_expr = self._flatten_piecewise(self.data_scaling)
-
-        # self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = RomScalingDefinition(
-        #     scaling=str(final_expr),
-        #     precision_decimals=self.decimal_places,
-        #     unit=self.unit,
-        #     functions=[self.mt_entry.item_label] if self.mt_entry.item_label else [],
-        # )
-
-        # print(f"Alle Rechnungen: {self.caluclations_raw}")
-
-        # if self.mt_entry.action is None:
-        #     raise RuntimeError("MasterTableEntry action datatype not set before saving SCALING action results.")
-        # self.mt_entry.action.scaling = self.rom_cfg.scaling_addresses[self.scaling_fn_ptr]
-
-        # logger.debug(f"Completed scaling detection at 0x{self.scaling_fn_ptr:04X}: {final_expr}")
-
-
-
     def run_post_actions(self):
-        # negative_sign = "-" if self.emulator.mem.read(self.rom_cfg.address_by_name('print_-_sign')) == 1 else ""
-        # positive_sign = "+" if self.emulator.mem.read(self.rom_cfg.address_by_name('print_+_sign')) == 1 else ""
-        # self.value_sign = f"{positive_sign}{negative_sign}"
-        # self.decimal_places = self.emulator.mem.read(self.rom_cfg.address_by_name('decimal_places'))
-        
-        # if self.decimal_places > 0:
-        #     self.instr_parser.raw_calculations.append(f" / {10 ** self.decimal_places}")
-       
-        
-        #print(f"Vor clean (value-sign \"{self.value_sign}\"): {' '.join(self.instr_parser.raw_calculations)} )", flush=True)
-
-        #expr = self._build_expr_from_tokens(self.value_sign, self.instr_parser.raw_calculations)
-        #expr = sp.piecewise_fold(expr)
-        #expr = sp.simplify(expr)
-        #self.data_scaling = expr
-        
-
-        #print(f"Cleaned: {self.data_scaling}", flush=True)
         pass
-
-    
-    def _build_expr_from_tokens(self, sign: str, tokens: List[str]) -> sp.Expr:
-        """
-        Baut aus den vom InstructionParser gelieferten Tokens direkt einen SymPy-Ausdruck.
-        - '+5', '-7', '*3', '/10' wirken algebraisch auf 'expr'
-        - 'if <cmp>' schließt aktuellen Zweig (expr, cond) ab
-        - Default-Arm wird automatisch angehängt
-        - am Ende piecewise_fold + simplify
-        """
-        x = sp.symbols("x1")
-        expr: Optional[sp.Expr] = None
-        arms: list[sp.Tuple[sp.Expr, Boolean]] = []
-
-        def to_relop(cond_raw: str, expr_for_cond: Optional[sp.Expr]) -> Relational:
-            cs = cond_raw.strip()
-            cs= cs.replace(" ", "")
-
-            left_expr = expr_for_cond if expr_for_cond is not None else x
-
-            if cs.startswith(">="):
-                return sp.Ge(left_expr, int(cs[2:]))
-
-            elif cs.startswith("<="):
-                return sp.Le(left_expr, int(cs[2:]))
-            elif cs.startswith(">"):
-                return sp.Gt(left_expr, int(cs[1:]))
-            elif cs.startswith("<"):
-                return sp.Lt(left_expr, int(cs[1:]))
-            elif cs.startswith("!="):
-                return sp.Ne(left_expr, int(cs[2:]))
-            elif cs.startswith("="):
-                return sp.Eq(left_expr, int(cs[1:]))
-            
-            raise ValueError(f"Unknown condition in scaling function: {cond_raw}")
-        
-        def apply_arrith(e: Optional[sp.Expr], token: str) -> sp.Expr:
-            #if e is None:
-            #    raise ValueError(f"Cannot apply arithmetic '{token}' without a base expression, need base value first.")
-            if token.startswith("+"):
-                return e + sp.sympify(token[1:])
-            elif token.startswith("-"):
-                return e - sp.sympify(token[1:])
-            elif token.startswith("*"):
-                return e * sp.sympify(token[1:])
-            elif token.startswith("/"):
-                return e / sp.sympify(token[1:])
-            elif token.startswith("~") or token == "~":
-                return sp.sympify(f"~({sp.sstr(e)})")
-            
-            return sp.sympify(token)
-        
-        i = 0
-        last_expr = None
-        while i < len(tokens):
-            raw = tokens[i].replace(" ", "")
-
-            # Erkenne das Muster "~" gefolgt von "+1"
-            if raw == "~" and i + 1 < len(tokens) and tokens[i + 1].replace(" ", "") == "+1":
-                if expr is None and last_expr is None:
-                    raise ValueError("Cannot start expression with '~' operator without a base value.")
-                expr = -expr if expr is not None else -last_expr
-                i += 2  # Überspringe "+1"
-                continue
-
-            if raw.startswith("if"):
-                cond_str = raw[2:]  # nutze originalen raw-String hinter "if"
-                cond = to_relop(cond_str, expr if expr is not None else last_expr)
-                if expr is None and last_expr is None:
-                    raise ValueError("Cannot create Piecewise arm without an expression before 'if'.")
-                arm_expr = expr if expr is not None else last_expr
-                arms.append((arm_expr, cond))
-                last_expr = arm_expr
-                expr = None
-                i += 1
-                continue
-                
-            if expr is None:
-                if raw != "~":
-                    expr = apply_arrith(last_expr, raw)
-                else:
-                    expr = None
-                if expr is None:
-                    raise ValueError("Cannot start expression with '~' operator without a base value.")
-            else:
-                expr = apply_arrith(expr, raw)
-            i += 1
-        
-        # Nach der Schleife: letzten Arm als Default (True) anhängen
-        if expr is not None:
-            arms.append((expr, True))
-
-        pw = sp.Piecewise(*arms)
-        if sign:
-            pw = sp.sympify(f"{sign}({sp.sstr(pw)})")
-        pw = sp.piecewise_fold(pw)
-        pw = sp.simplify(pw)
-        return pw
-
-
-    # def clean_calculation_string(self, sign: str, calculations: list[str]) -> str:
-
-    #     if len(calculations) == 0:
-    #         logger.warning("No calculations found in scaling function.")
-    #         return ""
-
-    #     value = ""
-    #     for op in calculations:
-    #         op = op.replace(" ", "")
-    #         if op == "+1" and value.startswith("~(") and value.endswith(")"):
-    #             # Special case: replace negation (~(...)+1) with -(...)
-    #             inner = value[2:-1]  # clean inner expression
-    #             value = f"-({inner})"
-    #         elif op.startswith("+"):
-    #             value = f"({value} + {op[1:]})"
-    #         elif op.startswith("-"):
-    #             value = f"({value} - {op[1:]})"
-    #         elif op.startswith("*"):
-    #             value = f"({value} * {op[1:]})"
-    #         elif op.startswith("/"):
-    #             value = f"({value} / {op[1:]})"
-    #         elif op.startswith("~"):
-    #             value = f"~({value})"
-    #         elif op.startswith("if"):
-    #             # Handle conditional expressions
-    #             condition = op[2:].strip()
-    #             value = f"Piecewise(({value},x1 {condition}))"
-    #         else:
-    #             value = op
-        
-    #     if sign:
-    #         value = f"{sign}({value})"
-
-    #     print(f"in klammern: {value}", flush=True)
-
-
-    #     x = sp.symbols('x1')
-    #     expr = sp.sympify(value)
-
-    #     return expr
-
-
-    def _flatten_piecewise(self, expr) -> sp.Expr:
-        """
-        Flacht Piecewise-Ausdrücke ab, führt identische Arme zusammen und vereinfacht Bedingungen.
-        """
-        expr = sp.sympify(expr)
-        expr = sp.piecewise_fold(expr)
-        if not isinstance(expr, sp.Piecewise):
-            return sp.simplify(expr)
-
-        by_expr: dict[sp.Expr, List[Boolean]] = {}
-        for arm_expr, cond in expr.args:
-            e = sp.simplify(arm_expr)
-            by_expr.setdefault(e, []).append(cond)
-
-        new_args: List[sp.Tuple[sp.Expr, Boolean]] = []
-        for e, conds in by_expr.items():
-            try:
-                new_cond = sp.simplify_logic(sp.Or(*conds), form="cnf")
-            except Exception:
-                new_cond = sp.Or(*conds)
-            new_args.append((e, new_cond))
-
-        if not any(c is True for _, c in new_args):
-            new_args.append((new_args[-1][0], True))
-
-        return sp.simplify(sp.Piecewise(*new_args))
-
-    def _extract_piecewise_boundaries(self, expr, sym: sp.Symbol) -> List[float]:
-        """
-        Robust: sammelt Grenzen aus Bedingungen (Relational, And/Or) und Nullstellen der Zweige.
-        Gibt eindeutige, sortierte float-Werte zurück.
-        """
-        expr = sp.piecewise_fold(sp.sympify(expr))
-        boundaries: set[sp.Expr] = set()
-
-        def add(vals):
-            for v in vals:
-                try:
-                    if getattr(v, "is_real", False):
-                        boundaries.add(sp.nsimplify(v))
-                except Exception:
-                    pass
-
-        def from_cond(c):
-            if c is True or c is False:
-                return
-            if isinstance(c, Relational):
-                try:
-                    add(sp.solve(sp.Eq(c.lhs, c.rhs), sym))
-                except Exception:
-                    pass
-                return
-            if isinstance(c, (And, Or)):
-                for a in c.args:
-                    from_cond(a)
-                return
-            try:
-                add(sp.solve(sp.Eq(c, 0), sym))
-            except Exception:
-                pass
-
-        def walk(e):
-            if isinstance(e, sp.Piecewise):
-                for branch, cond in e.args:
-                    from_cond(cond)
-                    try:
-                        add(sp.solve(sp.Eq(branch, 0), sym))
-                    except Exception:
-                        pass
-                    walk(branch)
-            else:
-                try:
-                    add(sp.solve(sp.Eq(e, 0), sym))
-                except Exception:
-                    pass
-
-        walk(expr)
-        out: List[float] = []
-        for b in boundaries:
-            try:
-                out.append(float(sp.N(b)))
-            except Exception:
-                pass
-        return sorted(set(out))
-    
-    # def _to_relop(self, cond_str: str, x: sp.Symbol) -> Boolean:
-    #     """
-    #     Sehr einfacher Lexer für die vom Parser erzeugten "if ..."-Marker:
-    #     erlaubt: >=, <=, >, <, ==, !=  mit rechter Seite als Integer.
-    #     """
-    #     cs = cond_str.strip()
-    #     if cs.startswith(">="):
-    #         return x >= int(cs[2:].strip())
-    #     if cs.startswith("<="):
-    #         return x <= int(cs[2:].strip())
-    #     if cs.startswith(">"):
-    #         return x > int(cs[1:].strip())
-    #     if cs.startswith("<"):
-    #         return x < int(cs[1:].strip())
-    #     if cs.startswith("=="):
-    #         return sp.Eq(x, int(cs[2:].strip()))
-    #     if cs.startswith("!="):
-    #         return sp.Ne(x, int(cs[2:].strip()))
-    #     raise ValueError(f"Unsupported condition in 'if': {cond_str!r}")
 
     def _set_unit(self):
         '''
