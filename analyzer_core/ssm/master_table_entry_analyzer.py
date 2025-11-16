@@ -163,6 +163,10 @@ class MasterTableEntryAnalyzer:
                 action_scaling_helper = SsmActionScalingFunction(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
                 action_scaling_helper.run_function()
 
+                if self.mt_entry.action is None:
+                    raise RuntimeError("MasterTableEntry action should be defined by now...")
+                self.mt_entry.action.scaling = action_scaling_helper.get_scaling_definition()
+
     
     def check_decompile_detect_pattern(self, action_ptr: int):
         # Prequisities: Check if this function is already known in assembly

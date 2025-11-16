@@ -8,7 +8,9 @@ import sympy as sp
 from sympy.logic.boolalg import Boolean
 from sympy.core.relational import Relational
 from pyparsing import Callable
+from analyzer_core.config.memory_map import MemoryRegion, RegionKind, RegionKind
 from analyzer_core.config.rom_config import RomConfig
+from analyzer_core.disasm.capstone_wrap import OperandType
 from analyzer_core.disasm.insn_model import Instruction
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.emu.tracing import MemAccess
@@ -57,8 +59,8 @@ class CalcInstructionParser:
 
         # Relevant addresses for calculation
         self.function_ptrs: dict[int, Callable[[Instruction, MemAccess], None]] = {
-            rom_cfg.address_by_name("divide"): self.divide,
-            rom_cfg.address_by_name("mul16bit"): self.mul16bit,
+            rom_cfg.address_by_name("divide"): self._divide,
+            rom_cfg.address_by_name("mul16bit"): self._mul16bit,
             #rom_cfg.address_by_name("print_lower_value"): lambda instr, access: None,
         }
 
@@ -75,6 +77,7 @@ class CalcInstructionParser:
         self.conditions: list[Relational] = []
         self.multi_step_complement: TwoStepComplement = TwoStepComplement.NONE
         self.multi_step_divide: TwoStepDivide = TwoStepDivide.NONE
+        self.lut_address: int | None = None
 
         # Don't go into functions for now
         self.jsr_level = 0
@@ -107,10 +110,6 @@ class CalcInstructionParser:
     # --- Handler functions called from outside ---
 
     def do_step(self, instr: Instruction, access: MemAccess):
-
-        # hier noch was
-
-        # TODO: Man braucht die PPrevious Register auch bevor diese Liste läuft? eigentlich nicht...?
 
         # Skip return instructions
         if instr.is_return:
@@ -145,6 +144,13 @@ class CalcInstructionParser:
         self.last_instruction = instr
 
         #print(f"Current calculation: {self.calculations}", flush=True)
+    
+    def _check_for_rom_address(self, addr: int) -> bool:
+        ''' Check if the given address is in a ROM or MAPPED_ROM region '''
+        region = self.emulator.mem.region_for(addr)
+        if region and (region.kind == RegionKind.ROM or region.kind == RegionKind.MAPPED_ROM):
+            return True
+        return False
 
 
     def set_target_from_var_to_register(self, instr: Instruction, register: str):
@@ -152,6 +158,7 @@ class CalcInstructionParser:
             self.new_calc_address = None
             self.new_calc_register = register
             self.calc_register_involed = True
+            
             self.raw_calculations.append("x1") # TODO später noch mehre Variablen unterstützen
             self.current_expr = self.symbol
 
@@ -166,6 +173,36 @@ class CalcInstructionParser:
             self.new_calc_address = None
             self.new_calc_register = register
             self.calc_register_involed = True
+        elif instr.target_type == OperandType.INDIRECT and self.new_calc_register == 'X':
+            self.new_calc_address = None
+            self.new_calc_register = register
+            self.calc_register_involed = True
+
+            # If we load indirect with X register (e.g. ldd 0, x), we should check if this is an address from the static ROM area.
+            # In that case it's likely to be a lookup table access
+            if instr.target_value is not None and self.lut_address is not None and self.lut_expr is not None:
+                current_lut_address= self.saved_registers.X + instr.target_value
+                # Check if we're still accessing ROM data -> then it's a LUT access
+                if self._check_for_rom_address(current_lut_address):
+                    factor, index_var = self._extract_item_size_index_var(self.lut_expr)
+
+                    # We've got a lookup table, create a function for it
+                    LUT = self._create_lookup_table(self.lut_address, item_size=factor) # TODO size noch dynamisch, wird immer 0,x genommen so
+
+                    self.raw_calculations.append(f"[{self.lut_expr}] -> LUT(addr=0x{self.lut_address:04X})")
+                    self.current_expr = LUT(index_var)  # type: ignore
+
+                    print(f"Lookup table access at 0x{instr.address:04X} to address 0x{current_lut_address:04X} with index {self.current_expr}", flush=True)
+
+                    self.lut_address = None
+                    self.lut_expr = None
+                
+                else:
+                    raise NotImplementedError("Expected LUT address, but accessed non-ROM area.")
+            else:
+                raise NotImplementedError("Indirect load with X register but no LUT address known.")
+               
+
         else:
             self.calc_register_involed = False
 
@@ -208,7 +245,7 @@ class CalcInstructionParser:
     
     # --- Functions for subroutines called in scaling functions ---
 
-    def divide(self, instr: Instruction, access: MemAccess):
+    def _divide(self, instr: Instruction, access: MemAccess):
         if self.new_calc_address in self.hex_buffer or self.new_calc_address == self.hex_buffer:
             '''or (
         isinstance(self.new_calc_address, (list, tuple))
@@ -231,7 +268,7 @@ class CalcInstructionParser:
         else:
             self.calc_register_involed = False
 
-    def mul16bit(self, instr: Instruction, access: MemAccess):
+    def _mul16bit(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "D" or self.new_calc_register == "B":
             self.raw_calculations.append(f" * {self.saved_registers.X}")
             self.current_expr = self.current_expr * self.saved_registers.X # type: ignore
@@ -273,6 +310,16 @@ class CalcInstructionParser:
     def std(self, instr: Instruction, access: MemAccess):
         self.set_target_from_register_to_var(instr, "D")
     
+    def xgdx(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "D":
+            self.new_calc_register = "X"
+            self.calc_register_involed = True
+        elif self.new_calc_register == "X":
+            self.new_calc_register = "D"
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+    
     def addd(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "D":
             self.raw_calculations.append(f" + {instr.target_value}")
@@ -297,6 +344,17 @@ class CalcInstructionParser:
             self.calc_register_involed = True
         elif self.new_calc_register == "A":
             raise NotImplementedError("addd handling for A register alone not implemented yet.")
+        elif self.new_calc_address == instr.target_value:
+            # Additional check for Lookup table access
+            if self._check_for_rom_address(self.saved_registers.D):
+                self.lut_address = self.saved_registers.D
+                self.lut_expr = self.current_expr
+
+            self.raw_calculations.append(f" + {self.saved_registers.D}")
+            self.current_expr = self.current_expr + self.saved_registers.D # type: ignore
+                
+            self.new_calc_register = "D"
+            self.calc_register_involed = True
         else:
             self.calc_register_involed = False
     
@@ -552,3 +610,62 @@ class CalcInstructionParser:
                 for off in (-1, +1):
                     solved_values.add(int(max(0, min(255, s + off))))
         return solved_values
+    
+    def _create_lookup_table(self, ptr: int, item_size: int):
+        """Erzeugt eine SymPy-Funktion für eine bestimmte Lookup-Tabelle."""
+
+        table_name = f"LUT_{ptr:04X}"
+
+        def get_item_list():
+            items = []
+            for i in range(256):
+                if item_size == 1:
+                    items.append(self.emulator.read8(ptr + i))
+                elif item_size == 2:
+                    items.append(self.emulator.read16(ptr + i * 2))
+                else:
+                    raise ValueError("Unsupported item size for lookup table.")  
+            return items
+
+        class _LookupTable(sp.Function):
+            nargs = 1
+            _table = get_item_list()
+            _name = table_name                # Name (z. B. "LUT_FD47")
+
+            @classmethod
+            def eval(cls, *args): # type: ignore
+                # Nur auswerten, wenn x eine konkrete Zahl ist
+                if args[0].is_Integer:
+                    idx = int(args[0])
+                    if 0 <= idx < len(cls._table):
+                        return sp.Integer(cls._table[idx])
+                return None  # symbolisch lassen
+
+        _LookupTable.__name__ = table_name
+        return _LookupTable
+    
+    def _extract_item_size_index_var(self, expr: sp.Expr) -> tuple[int, sp.Basic]:
+        vars = list(expr.free_symbols)
+        if len(vars) != 1:
+            raise NotImplementedError("Expected exactly one free symbol in LUT index expression.")
+        index_var = vars[0]
+
+        factor = expr.coeff(index_var)
+        
+        if factor.is_Integer and expr == factor * index_var:
+            return int(factor), index_var
+        
+        raise NotImplementedError("Could not extract item size and index variable from LUT expression.")
+
+    
+    def negate_current_expression(self):
+        '''
+        Negate the current expression
+        '''
+        if self.current_expr is not None:
+            self.current_expr = -self.current_expr
+    
+    def calculate_decimal_places(self, decimal_places: int):
+        if decimal_places > 0:
+            self.raw_calculations.append(f" / {10 ** decimal_places}")
+            self.current_expr = self.current_expr / (10 ** decimal_places) 

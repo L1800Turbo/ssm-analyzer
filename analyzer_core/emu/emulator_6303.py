@@ -324,7 +324,7 @@ class Emulator6303:
 
             asm_step: MemAccess = func(instr)
 
-            if instr.address == 0x3385 or instr.address == 0x2E90:
+            if instr.address == 0x31C2:
                 pass
 
             # TODO hier die steps auswerten?
