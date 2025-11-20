@@ -19,6 +19,70 @@ from analyzer_core.emu.tracing import MemAccess
 class ParserError(Exception):
     pass
 
+class LookupTable(sp.Function):
+    nargs = 1
+    table_data = ()
+    table_ptr = None
+    #item_size = item_size
+    name = "LUT"
+
+    @classmethod
+    def eval(cls, *args): # type: ignore
+        # Nur auswerten, wenn x eine konkrete Zahl ist
+        if args[0].is_Integer:
+            idx = int(args[0])
+            if 0 <= idx < len(cls.table_data):
+                return sp.Integer(cls._interpret_value(cls.table_data[idx]))
+                #return sp.Integer(cls.table_data[idx])
+            else:
+                return sp.S.NaN
+        return None  # sonst symbolisch lassen
+    
+    # @staticmethod
+    # def _interpret_value(v):
+    #     """LUT-Werte (16 Bit) als signed interpretieren."""
+    #     v = int(v) & 0xFFFF
+    #     #if v & 0x8000:
+    #     #    return v - 0x10000
+    #     return v
+    
+    # @classmethod
+    # def value(cls, idx):
+    #     return cls._interpret_value(cls.table_data[idx])
+
+    # @classmethod
+    # def valid_indices(cls, predicate):
+    #     """
+    #     Liefert alle i (0..255), für die predicate(value) True ist.
+    #     predicate: Funktion v -> bool
+    #     """
+    #     out = []
+    #     for i, raw in enumerate(cls.table_data):
+    #         v = cls._interpret_value(raw)
+    #         if predicate(v):
+    #             out.append(i)
+    #     return out
+
+    def _eval_rewrite_as_piecewise(self, x, **kwargs):
+        """Erzeuge eine Piecewise-Darstellung LUT(symbol)."""
+        pieces = [(sp.S(val), sp.Eq(x, iter)) for iter, val in enumerate(self.table_data)]
+        pieces.append((sp.S.NaN, True))  # Default-Fall
+        return sp.Piecewise(*pieces)
+    
+    def _eval_is_real(self):
+        return all(sp.S(val).is_real for val in self.table_data)
+    
+    @classmethod
+    def preimage(cls, value):
+        """Gibt alle Indizes i zurück, für die LUT(i) == value gilt."""
+        value = sp.S(value)
+        indizes = [i for i, v in enumerate(cls.table_data) if sp.S(v) == value]
+        return sp.FiniteSet(*indizes)
+
+    @classmethod
+    def __repr__(cls):
+        return f"<LookupTable {cls.name} at 0x{cls.table_ptr:04X}>"
+
 class TwoStepComplement(IntEnum):
     NONE = 0
     INVERT = 1  # ~ x
@@ -74,6 +138,8 @@ class CalcInstructionParser:
         #self.conditions: list[list[str]] = []
 
         self.current_expr: Optional[sp.Expr] = None
+        self.last_tested_expr: Optional[sp.Expr] = None
+
         self.conditions: list[Relational] = []
         self.multi_step_complement: TwoStepComplement = TwoStepComplement.NONE
         self.multi_step_divide: TwoStepDivide = TwoStepDivide.NONE
@@ -232,6 +298,16 @@ class CalcInstructionParser:
                 return False
         else:
             raise ParserError(f"Instruction at 0x{instr.address:04X} is not a branch instruction.")
+    
+    def _get_test_expression(self) -> Optional[sp.Expr]:
+        if self.last_tested_expr is None:
+            test_expr = self.current_expr
+        else:
+            test_expr = self.last_tested_expr
+            self.last_tested_expr = None
+        
+        return test_expr
+
 
    # def set_branch_impact(self):
         # If in a previous step a register used in calculation changed, mark that branches depend on calculation values
@@ -371,6 +447,12 @@ class CalcInstructionParser:
             self.calc_register_involed = True
         elif self.new_calc_register == "A":
             raise NotImplementedError("subd handling for A register alone not implemented yet.")
+        elif self.__is_address_match(instr.target_value, self.new_calc_address):
+            self.raw_calculations.append(f" {self.saved_registers.D} - ")
+            self.current_expr = self.saved_registers.D - self.current_expr # type: ignore
+
+            self.new_calc_register = "D"
+            self.calc_register_involed = True
         else:
             self.calc_register_involed = False
 
@@ -505,6 +587,20 @@ class CalcInstructionParser:
     def tst(self, instr: Instruction, access: MemAccess):
         if self.new_calc_address == instr.target_value:
             raise NotImplementedError("tst handling not implemented yet.")
+        # TODO Hier auf print_-_sign adresse prüfen und die dann mit auf 0? oder x1? also ja wenn < 0... 
+        elif self.rom_cfg.address_by_name('print_-_sign') == instr.target_value:
+            # Check if the - sign was set -> another way to check for < 0 before
+            self.raw_calculations.append("tst < 0")
+            self.last_tested_expr = self.current_expr # TODO eigentlich ja gegen 0
+            self.calc_register_involed = True
+
+        else:
+            self.calc_register_involed = False
+    
+    def tsta(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "A":
+            self.last_tested_expr = self.current_expr
+            self.calc_register_involed = True
         else:
             self.calc_register_involed = False
     
@@ -513,10 +609,10 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             if self.branch_condition_met(instr, access):
                 self.raw_calculations.append(" if == 0")
-                cond = sp.Eq(self.current_expr, 0)
+                cond = sp.Eq(self._get_test_expression(), 0)
             else:
                 self.raw_calculations.append(" if != 0")
-                cond = sp.Ne(self.current_expr, 0)
+                cond = sp.Ne(self._get_test_expression(), 0)
             self.conditions.append(cond)
     
     def bne(self, instr: Instruction, access: MemAccess):
@@ -524,10 +620,10 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             if self.branch_condition_met(instr, access):
                 self.raw_calculations.append(" if != 0")
-                cond = sp.Ne(self.current_expr, 0)
+                cond = sp.Ne(self._get_test_expression(), 0)
             else:
                 self.raw_calculations.append(" if == 0")
-                cond = sp.Eq(self.current_expr, 0)
+                cond = sp.Eq(self._get_test_expression(), 0)
             self.conditions.append(cond)
 
     def bcc(self, instr: Instruction, access: MemAccess):
@@ -535,10 +631,10 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             if self.branch_condition_met(instr, access):
                 self.raw_calculations.append(" if >= 0")
-                cond = sp.Ge(self.current_expr, 0)
+                cond = sp.Ge(self._get_test_expression(), 0)
             else:
                 self.raw_calculations.append(" if < 0")
-                cond = sp.Lt(self.current_expr, 0)
+                cond = sp.Lt(self._get_test_expression(), 0)
             self.conditions.append(cond)
             
             #self.conditions.append(self.calculations.copy())
@@ -548,10 +644,10 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             if self.branch_condition_met(instr, access):
                 self.raw_calculations.append(" if < 0")
-                cond = sp.Lt(self.current_expr, 0)
+                cond = sp.Lt(self._get_test_expression(), 0)
             else:
                 self.raw_calculations.append(" if >= 0")
-                cond = sp.Ge(self.current_expr, 0)
+                cond = sp.Ge(self._get_test_expression(), 0)
             self.conditions.append(cond)
 
     def bpl(self, instr: Instruction, access: MemAccess):
@@ -559,10 +655,10 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             if self.branch_condition_met(instr, access):
                 self.raw_calculations.append(" if >= 0")
-                cond = sp.Ge(self.current_expr, 0)
+                cond = sp.Ge(self._get_test_expression(), 0)
             else:
                 self.raw_calculations.append(" if < 0")
-                cond = sp.Lt(self.current_expr, 0)
+                cond = sp.Lt(self._get_test_expression(), 0)
             self.conditions.append(cond)
 
     def bmi(self, instr: Instruction, access: MemAccess):
@@ -570,10 +666,10 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             if self.branch_condition_met(instr, access):
                 self.raw_calculations.append(" if < 0")
-                cond = sp.Lt(self.current_expr, 0)
+                cond = sp.Lt(self._get_test_expression(), 0)
             else:
                 self.raw_calculations.append(" if >= 0")
-                cond = sp.Ge(self.current_expr, 0)
+                cond = sp.Ge(self._get_test_expression(), 0)
             self.conditions.append(cond)
 
     def bra(self, instr: Instruction, access: MemAccess):
@@ -600,10 +696,32 @@ class CalcInstructionParser:
         '''
         solved_values = set()
         for cond in self.conditions:
-            # Solve each condition with 0 to the symbol TODO zunächst nur ein Symbol x1
-            eq = sp.Eq(cond.lhs, 0)
-            sol = sp.solve(eq, self.symbol)
-            #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
+
+            if isinstance(cond.lhs, sp.Function) and issubclass(cond.lhs.func, LookupTable):
+                LUT = cond.lhs.func
+
+                sol = LUT.preimage(0)
+                if sol:
+                    bool_expr = sp.Or(*[sp.Eq(self.symbol, idx) for idx in sol])
+                    print(f"  Lösung Bedingung {cond}: {bool_expr}", flush=True)
+                else:
+                    print(f"  Lösung Bedingung {cond}: Keine Lösung", flush=True)
+                
+                # TODO So nimmt er einfach alle Werte und guckt, ob einer ==0 ist, aber wenn es keiner ist?
+                #sol = LUT.valid_indices(lambda v: v == 0)
+                #print(f"  Valid indices for LUT {LUT.name} where value == 0: {sol}", flush=True)
+
+                #sol = sp.solveset(sp.Eq(LUT(self.symbol), 0), self.symbol, domain=sp.Range(0, len(LUT.table_data)))
+                #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
+
+            else:
+            
+                #cond.lhs = LUT.as_piecewise(self.symbol)
+
+                # Solve each condition with 0 to the symbol TODO zunächst nur ein Symbol x1
+                eq = sp.Eq(cond.lhs, 0)
+                sol = sp.solve(eq, self.symbol)
+                #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
 
             # Some equations solve by <, some by <= and vise versa, so we test both sides of the solution
             for s in sol:
@@ -616,30 +734,24 @@ class CalcInstructionParser:
 
         table_name = f"LUT_{ptr:04X}"
 
-        def get_item_list():
-            items = []
-            for i in range(256):
-                if item_size == 1:
-                    items.append(self.emulator.read8(ptr + i))
-                elif item_size == 2:
-                    items.append(self.emulator.read16(ptr + i * 2))
-                else:
-                    raise ValueError("Unsupported item size for lookup table.")  
-            return items
+        items = []
+        for i in range(256):
+            if item_size == 1:
+                items.append(self.emulator.read8(ptr + i))
+            elif item_size == 2:
+                items.append(self.emulator.read16(ptr + i * 2))
+            else:
+                raise ValueError("Unsupported item size for lookup table.")
+        
+        return type(table_name, (LookupTable,), {
+            "table_data": tuple(items),
+            "table_ptr": ptr,
+            #"item_size": item_size,
+            "name": table_name
+        })
+            
 
-        class _LookupTable(sp.Function):
-            nargs = 1
-            _table = get_item_list()
-            _name = table_name                # Name (z. B. "LUT_FD47")
-
-            @classmethod
-            def eval(cls, *args): # type: ignore
-                # Nur auswerten, wenn x eine konkrete Zahl ist
-                if args[0].is_Integer:
-                    idx = int(args[0])
-                    if 0 <= idx < len(cls._table):
-                        return sp.Integer(cls._table[idx])
-                return None  # symbolisch lassen
+        
 
         _LookupTable.__name__ = table_name
         return _LookupTable

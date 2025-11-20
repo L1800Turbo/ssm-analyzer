@@ -91,7 +91,7 @@ class RomIdEntryAnalyzer:
         rom_cfg = self.rom_cfg
         self.current_request_romid_cmd = (0,0,0,0)
 
-        self.logger.debug(f"Running request_romid_save_romid function for {self.entry.romid0:02X} {self.entry.romid1:02X} {self.entry.romid2:02X}...")
+        self.logger.debug(f"Running request_romid_save_romid function for {self.entry.print_romid_str()}...")
 
         def hook_get_ssm_receive_status(addr:int, val:int, mem: MemoryManager):
             #Current RomID request command we received

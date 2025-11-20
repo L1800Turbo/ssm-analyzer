@@ -171,6 +171,13 @@ class RomScalingDefinition:
     precision_decimals: int
     unit: Optional[str] = None
     functions: list[str] = field(default_factory=list)
+
+@dataclass
+class RomSwitchDefinition:
+    name: str
+    inverted: bool
+    bit: int # 0-7
+
     
 @dataclass
 class SsmAction:
@@ -182,6 +189,7 @@ class SsmAction:
     ecu_addresses: list[int] = field(default_factory=list)
 
     scaling: Optional[RomScalingDefinition] = None
+    switches: Optional[list[RomSwitchDefinition]] = None
 
 
 

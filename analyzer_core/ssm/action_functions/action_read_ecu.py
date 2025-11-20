@@ -70,22 +70,8 @@ class SsmActionReadEcu(SsmActionHelper):
         self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("read_from_ecu"), hook_post_read_from_ecu)
 
         # We don't need the output now
-        #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_skip_action)
-        #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_skip_action)
-
-        # TOOD Erst nur für Tests
-        def mock_print_upper_screen(em: Emulator6303):
-            screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
-            print(f"Upper Screen [{screen_line}]", flush=True)
-            em.mock_return()
-        
-        def mock_print_lower_screen(em: Emulator6303):
-            screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
-            print(f"Lower Screen [{screen_line}]", flush=True)
-            em.mock_return()
-
-        self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
-        self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
+        self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_skip_action)
+        self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_skip_action)
 
         # Indicate that a response has been received
         SsmEmuHelper.set_ssm_response_received_flag(self.rom_cfg, self.emulator)

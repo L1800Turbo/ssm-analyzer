@@ -103,6 +103,10 @@ class RomIdTableAnalyzer:
             # attach cu-specific addresses (reads various pointers/limits back into entry)
             entry_analyzer.run_attach_cu_specific_addresses()
 
+            # TODO Für Debuggen und schneller suchen
+            if entry.print_romid_str() != "76 5D B0":
+                return
+
 
             # Create MasterTable analyzer for this entry (done by caller or here)
             entry.master_table = MasterTableInfo(

@@ -27,6 +27,9 @@ class MasterTableEntryAnalyzer:
         if self.mt_entry.upper_label is None:
             raise EmulationError(f"Upper label for MasterTable entry {self.mt_entry.menu_item_str()} is None.")
         
+        if self.mt_entry.menu_item_str() == "FA0":
+            pass
+        
         self.mt_entry.action = SsmAction(
             action_type=ActionType.UNDEFINED,
             upper_label_raw=self.mt_entry.upper_label,
@@ -52,10 +55,15 @@ class MasterTableEntryAnalyzer:
         
         def item_label(upper_label:str) -> str:
             '''Extract the item label from e.g.  EX.TEMP  (F23) '''
-            result = re.match(r"\s*(\S+)\s+\((\S+)\)", upper_label)
+            result = re.match(r"\s*(.+)\s*\((\S+)\)", upper_label)
             if result:
+                # Sanity check for Fxx index name between label and MasterTable entry
                 if result.group(2) != self.mt_entry.menu_item_str():
-                    raise ValueError(f"Extracted item label index '{result.group(2)}' does not match MasterTable entry menu item '{self.mt_entry.menu_item_str()}'")
+                    # Additional check for fault in Rom at VALVE CHK (F21) (IMPREZA96) -> Should be FC1 as every other VALVE CHK label
+                    if result.group(1) == 'VALVE CHK' and result.group(2) == 'F21':
+                        pass
+                    else:
+                        raise ValueError(f"Extracted item label index '{result.group(2)}' does not match MasterTable entry menu item '{self.mt_entry.menu_item_str()}'")
                 return result.group(1)
             raise ValueError(f"Could not extract item label from upper label '{upper_label}'")
             
@@ -103,7 +111,7 @@ class MasterTableEntryAnalyzer:
         self.check_decompile_detect_pattern(action_ptr)
 
         # Try to get this action function
-        action_fn = self.rom_cfg.get_by_address(action_ptr)
+        action_fn = self.rom_cfg.get_by_address(action_ptr) # TODO hier evtl. den Datentyp vom Helper zurück geben?
 
         # If the action function couldn't be matched, at all, yet
         if action_fn is None:
@@ -118,7 +126,7 @@ class MasterTableEntryAnalyzer:
         if action_fn.name == "action_year":
             # Run the YEAR interpreter
             action_helper = SsmActionYear(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
-            action_helper._add_function_mocks()
+            action_helper._add_function_mocks() # TODO weg?
 
             # TODO Wird da was gemacht??
             SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
@@ -126,7 +134,7 @@ class MasterTableEntryAnalyzer:
         elif action_fn.name == "action_read_ecu":
             from analyzer_core.ssm.action_functions.action_read_ecu import SsmActionReadEcu
             action_helper = SsmActionReadEcu(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
-            action_helper._add_function_mocks()
+            action_helper._add_function_mocks() # TODO weg?
 
             #SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
 
@@ -143,9 +151,13 @@ class MasterTableEntryAnalyzer:
                                     f"for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
                 self.emulator.hooks.mock_function(action_ptr, mock_default_action)
 
-                # Also mock the print functions to just print the labels for debug
+                # Also mock the print functions to just print the labels for debug on unknown actions
                 self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
                 self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
+                # Or don't use it at all
+                #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_default_action)
+                #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_default_action)
+                
 
                 SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
 
@@ -161,11 +173,17 @@ class MasterTableEntryAnalyzer:
             # Run if scaling function should be called, check if value-dependent branches exist which require multiple runs
             if action_helper.needs_scaling_fn:
                 action_scaling_helper = SsmActionScalingFunction(self.rom_cfg, self.emulator, self.current_device, self.romid_entry, self.mt_entry)
+
+                # for debug
                 action_scaling_helper.run_function()
 
                 if self.mt_entry.action is None:
                     raise RuntimeError("MasterTableEntry action should be defined by now...")
-                self.mt_entry.action.scaling = action_scaling_helper.get_scaling_definition()
+                if action_scaling_helper.use_switches_mode:
+                    self.mt_entry.action.switches = action_scaling_helper.get_switch_definitions()
+                else:
+                    self.mt_entry.action.scaling = action_scaling_helper.get_scaling_definition()
+                
 
     
     def check_decompile_detect_pattern(self, action_ptr: int):

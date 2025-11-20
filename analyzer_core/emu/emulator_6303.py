@@ -324,7 +324,7 @@ class Emulator6303:
 
             asm_step: MemAccess = func(instr)
 
-            if instr.address == 0x31C2:
+            if instr.address == 0x31C2 or instr.address == 0x2C36:
                 pass
 
             # TODO hier die steps auswerten?
@@ -1646,16 +1646,24 @@ class Emulator6303:
         ma.next_instr_addr=self.PC
         return ma
 
-    # @operand_needed
-    # def daa(self, insn: CsInsn):
-    #     """Decimal Adjust Accumulator (BCD) – einfache Version"""
-    #     if (self.A & 0x0F) > 9:
-    #         self.A += 0x06
-    #     if (self.A & 0xF0) > 0x90 or self.flags.C:
-    #         self.A += 0x60
-    #     self.A &= 0xFF
-    #     self.__set_z(self.A)
-    #     self.PC += insn.size
+    def tsta(self, instr: Instruction) -> MemAccess:
+        # Flags setzen
+        self._set_ZN_8(self.A)
+        self.flags.V = 0  # Always clear overflow flag
+        # No changes to carry
+
+        old_PC = self.PC
+        self.PC += instr.size
+
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=None,
+            value=self.A,
+            rw='',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
 
     def pshx(self, instr: Instruction) -> MemAccess:
         """Push X auf Stack"""

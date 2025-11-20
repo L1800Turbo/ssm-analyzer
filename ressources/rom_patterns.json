@@ -448,6 +448,31 @@
         { "mnemonic": "bra" }
       ],
       "description": ""
+    },
+    {
+      "name": "print_switch_screen",
+      "pattern": [
+        { "mnemonic": "ldab", "op_str": "REF{current_romid_scaling_index}" },
+        { "mnemonic": "decb" },
+        { "mnemonic": "ldaa" },
+        { "mnemonic": "mul" },
+        { "mnemonic": "abx" },
+        { "mnemonic": "ldd" },
+        { "mnemonic": "xgdx" },
+        { "mnemonic": "jsr", "op_str": "REF{set_upper_screen_buffer}" },
+        { "mnemonic": "jsr", "op_str": "REF{print_upper_screen}" }
+      ],
+      "description": "IMPREZA96 @0x34C6: Print value to upper screen and switch screen based on RomID scaling index (RomID[3])"
+    },
+    {
+      "name": "hex_value_to_ssm_light",
+      "pattern": [
+        { "mnemonic": "eora", "op_str": 0 },
+        { "mnemonic": "inx" },
+        { "mnemonic": "ldab", "op_str": 5 },
+        { "mnemonic": "psha" }
+      ],
+      "description": "IMPREZA96 @0xB501: Set SSM lights based on hex value, usually used for switches"
     }
   ],
   "strings": {

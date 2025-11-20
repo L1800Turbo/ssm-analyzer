@@ -6,7 +6,7 @@ from sympy.logic.boolalg import Boolean
 from analyzer_core.analyze.instruction_parser import CalcInstructionParser
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.rom_config import RomConfig, RomScalingDefinition
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, RomSwitchDefinition
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.disasm.insn_model import Instruction
 from analyzer_core.emu.emulator_6303 import Emulator6303
@@ -29,6 +29,12 @@ class SsmActionScalingFunction(SsmActionHelper):
         self.current_device = current_device
         self.romid_entry = romid_entry
         self.mt_entry = mt_entry
+
+        # For use of switches
+        self.use_switches_mode = False
+        self.switch_defs: List[RomSwitchDefinition] = []
+        self.upper_screen_line: Optional[str] = None
+        self.lower_screen_line: Optional[str] = None
 
         self.unit: Optional[str] = None
 
@@ -81,7 +87,7 @@ class SsmActionScalingFunction(SsmActionHelper):
 
         # As soon as we read the SSM RX bytes in the scaling function, we log the tracing
         def hook_read_ssm_rx_bytes_in_scaling_fn(addr: int, value: int, mem: MemoryManager):
-            logger.debug(f"hook_read_ssm_rx_bytes_in_scaling_fn at {addr:04X}")
+            #logger.debug(f"hook_read_ssm_rx_bytes_in_scaling_fn at {addr:04X}")
             #self.emulator.add_logger("scaling_fn_ssm_rx_logger", lambda instr, access: logging.debug(f"[SCALING_FN] Read SSM RX Bytes: {instr.address:04X}"))
             self.emulator.add_logger("scaling_fn_ssm_rx_logger", self._trace_rx_value_calculation)
 
@@ -96,6 +102,64 @@ class SsmActionScalingFunction(SsmActionHelper):
 
         self.emulator.hooks.add_pre_hook(self.scaling_fn_ptr, hook_pre_scaling_function)
         self.emulator.hooks.add_post_hook(self.scaling_fn_ptr, hook_post_scaling_function)
+
+
+        # ------ Definitions and hooks for Switches mode ------
+        # def mock_print_upper_screen(em: Emulator6303):
+        #     # Take upper and lower line as during this function call the variables should be set
+        #     self.upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
+        #     self.lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
+        #     #print(f"Upper Screen [{self.upper_screen_line}]", flush=True)
+        #     em.mock_return()
+        
+        #def mock_print_lower_screen(em: Emulator6303):
+        #    self.lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
+        #    #print(f"Lower Screen [{self.lower_screen_line}]", flush=True)
+        #    em.mock_return()
+        
+        def mock_hex_value_to_ssm_light(em: Emulator6303):
+            # Get switch values that should have been printed by now
+            if self.upper_screen_line is None or self.lower_screen_line is None:
+                raise RuntimeError("Switch screen lines not captured before hex_value_to_ssm_light call.")
+            switch_labels = self._get_switch_labels(self.upper_screen_line, self.lower_screen_line)
+
+            # At the time of this function call, the X pointer leads to the switch assignments starting with the XOR part,
+            # followed by the switch bit assignments in form of a byte for each switch (0-9)
+
+            xor_value = em.read8(em.X)
+
+            for idx, label in switch_labels.items():
+                # Get switch value from the corresponding byte
+                switch_value = em.read8(em.X + 1 + idx)
+
+                self.switch_defs.append(RomSwitchDefinition(
+                    name=label,
+                    inverted=(switch_value & xor_value) == 1, # TODO prüfen ob das so stimmt
+                    bit=switch_value.bit_length() - 1
+                ))
+
+            em.mock_return()
+
+        def hook_post_print_switch_screen(em: Emulator6303, access):
+            self.use_switches_mode = True
+
+            # Mock the print functions to capture the switch labels
+            #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
+            #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
+
+            # Save the screen lines directly in this function only print_upper_screen is called, the other one happens after the Scaling fn
+            self.upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
+            self.lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
+
+            # Mock the hex value printer entirely as it might be simpler than emulating it for all SSM values
+            self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("hex_value_to_ssm_light"), mock_hex_value_to_ssm_light)
+
+
+        # Add a hook to the function 'print_switch_screen' which is responsible to printing the switch values on a DIO
+        # Use this to enable Switches mode -> alternative: Check by name DIOx FAx
+        # Decompilation and detection happens on the first switch, so we hook this only after we know the function address
+        if self.rom_cfg.check_for_address("print_switch_screen"):
+            self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("print_switch_screen"), hook_post_print_switch_screen)
 
         
         # TODO Noch mocken?
@@ -180,15 +244,17 @@ class SsmActionScalingFunction(SsmActionHelper):
         print(f"Final Scaling Expression: {final_expr}", flush=True)
 
         self.final_expr = final_expr
-        
 
 
-        self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = RomScalingDefinition(
-            scaling=sp.simplify(final_expr, force=True),
-            precision_decimals=decimal_places,
-            unit=self.unit,
-            functions=[self.mt_entry.item_label] if self.mt_entry.item_label else []
-        )
+        # Check if we are in Switches mode where we don't need a static scaling but the switch values
+        # Switches are already handled in the mocks above
+        if not self.use_switches_mode:
+            self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = RomScalingDefinition(
+                scaling=sp.simplify(final_expr, force=True),
+                precision_decimals=decimal_places,
+                unit=self.unit,
+                functions=[self.mt_entry.item_label] if self.mt_entry.item_label else []
+            )
 
 
     def run_post_actions(self):
@@ -199,6 +265,22 @@ class SsmActionScalingFunction(SsmActionHelper):
             raise RuntimeError("Scaling function has not been emulated yet, no scaling definition available.")
         
         return self.rom_cfg.scaling_addresses[self.scaling_fn_ptr]
+
+    def get_switch_definitions(self) -> List[RomSwitchDefinition]:
+        return self.switch_defs
+    
+    def _get_switch_labels(self, upper_line: str, lower_line: str) -> dict[int, str]:
+        labels = {}
+        upper = upper_line.strip().split()
+        lower = lower_line.strip().split()
+        for idx, upper_val in enumerate(upper, start=0):
+            if upper_val != "__":
+                labels[idx] = upper_val
+        for idx, lower_val in enumerate(lower, start=5):
+            if lower_val != "__":
+                labels[idx] = lower_val
+        return labels
+
         
 
     def _set_unit(self):

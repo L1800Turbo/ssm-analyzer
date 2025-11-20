@@ -17,11 +17,6 @@ class MasterTableAnalyzer:
         self.__romid_entry = romid_entry
 
 
-        #self.entries = self.__create_master_table()
-    
-    def __create_master_table(self):
-        pass
-
     def collect_master_table_entries(self, current_device: CurrentSelectedDevice):
         
         master_table_ptr = self.__romid_entry.master_table_address_rel
