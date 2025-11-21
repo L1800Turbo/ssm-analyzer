@@ -228,12 +228,21 @@ class SsmActionScalingFunction(SsmActionHelper):
         eq_pieces = list(dict.fromkeys(eq_pieces))
 
         # Group by same expressions
-        grouped: dict[sp.Expr | None, list[Boolean]] = {}
+        #grouped: dict[sp.Expr | None, list[Boolean]] = {}
+        #for expr, cond in eq_pieces:
+        grouped: dict[str, tuple[sp.Expr, list[Boolean]]] = {}
         for expr, cond in eq_pieces:
-            grouped.setdefault(expr, []).append(cond)
+            key:str = sp.srepr(sp.simplify(expr))
+            if key in grouped:
+                grouped[key][1].append(cond)
+            else:
+                grouped[key] = (expr, [cond])
+
+            #grouped.setdefault(expr, []).append(cond)
 
         combined_equations: list[tuple[sp.Expr | None, Boolean]] = []
-        for expr, conds in grouped.items():
+        #for expr, conds in grouped.items():
+        for expr, conds in grouped.values(): # Not items, take the tuple
             condition = sp.Or(*conds)
             simplified_condition = sp.simplify(condition, force=True)
             

@@ -38,13 +38,13 @@ class LookupTable(sp.Function):
                 return sp.S.NaN
         return None  # sonst symbolisch lassen
     
-    # @staticmethod
-    # def _interpret_value(v):
-    #     """LUT-Werte (16 Bit) als signed interpretieren."""
-    #     v = int(v) & 0xFFFF
-    #     #if v & 0x8000:
-    #     #    return v - 0x10000
-    #     return v
+    @staticmethod
+    def _interpret_value(v):
+        """LUT-Werte (16 Bit) als signed interpretieren."""
+        v = int(v) & 0xFFFF
+        if v & 0x8000:
+            return v - 0x10000
+        return v
     
     # @classmethod
     # def value(cls, idx):
@@ -66,7 +66,7 @@ class LookupTable(sp.Function):
     def _eval_rewrite_as_piecewise(self, x, **kwargs):
         """Erzeuge eine Piecewise-Darstellung LUT(symbol)."""
         pieces = [(sp.S(val), sp.Eq(x, iter)) for iter, val in enumerate(self.table_data)]
-        pieces.append((sp.S.NaN, True))  # Default-Fall
+        pieces.append((sp.S.NaN, sp.S.true))  # Default-Fall
         return sp.Piecewise(*pieces)
     
     def _eval_is_real(self):
@@ -129,7 +129,9 @@ class CalcInstructionParser:
         }
 
         # TODO Hardcoded auf eins zunächjst
-        self.symbol = sp.Symbol("x1")
+        self.symbol = sp.Symbol("x1", real = True)
+        #self.neg_flag_sym = sp.Symbol("neg_flag", integer=True)
+        self.neg_flag_val = 0
 
         self.init_new_instruction()
 
@@ -420,7 +422,7 @@ class CalcInstructionParser:
             self.calc_register_involed = True
         elif self.new_calc_register == "A":
             raise NotImplementedError("addd handling for A register alone not implemented yet.")
-        elif self.new_calc_address == instr.target_value:
+        elif self.__is_address_match(instr.target_value, self.new_calc_address):
             # Additional check for Lookup table access
             if self._check_for_rom_address(self.saved_registers.D):
                 self.lut_address = self.saved_registers.D
@@ -473,6 +475,26 @@ class CalcInstructionParser:
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
+    
+    def anda(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "A":
+            self.raw_calculations.append(f" & {instr.target_value}")
+
+            # & doesn't work with sympy Expr -> take modulo for masks
+            if instr.target_value is None:
+                raise ParserError("ANDA instruction without target value.")
+            
+            mask = instr.target_value
+            if mask & (mask +1) == 0:
+                # If mask is continuous 1s from LSB (e.g. 0x0F, 0x3F, 0xFF, 0x7FFF, etc), we can use modulo
+                self.current_expr = self.current_expr % (mask +1) # type: ignore
+            else:
+                raise NotImplementedError("Non-continuous AND masks not implemented yet.")
+            #self.current_expr = self.current_expr & instr.target_value # type: ignore
+
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
 
     def negb(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "B":
@@ -496,6 +518,8 @@ class CalcInstructionParser:
                 self.current_expr = self.current_expr + 1 # type: ignore
 
             self.calc_register_involed = True
+        elif self.rom_cfg.address_by_name('print_-_sign') == instr.target_value:
+            self.neg_flag_val = 1
         else:
             self.calc_register_involed = False
 
@@ -557,6 +581,8 @@ class CalcInstructionParser:
             self.current_expr = self.current_expr * 0 # type: ignore
             
             self.calc_register_involed = True
+        elif self.rom_cfg.address_by_name('print_-_sign') == instr.target_value:
+            self.neg_flag_val = 0
         else:
             self.calc_register_involed = False
 
@@ -590,8 +616,8 @@ class CalcInstructionParser:
         # TODO Hier auf print_-_sign adresse prüfen und die dann mit auf 0? oder x1? also ja wenn < 0... 
         elif self.rom_cfg.address_by_name('print_-_sign') == instr.target_value:
             # Check if the - sign was set -> another way to check for < 0 before
-            self.raw_calculations.append("tst < 0")
-            self.last_tested_expr = self.current_expr # TODO eigentlich ja gegen 0
+            self.raw_calculations.append("tst auf - zeichen")
+            self.last_tested_expr = sp.Integer(self.neg_flag_val)
             self.calc_register_involed = True
 
         else:
@@ -697,36 +723,75 @@ class CalcInstructionParser:
         solved_values = set()
         for cond in self.conditions:
 
-            if isinstance(cond.lhs, sp.Function) and issubclass(cond.lhs.func, LookupTable):
-                LUT = cond.lhs.func
-
-                sol = LUT.preimage(0)
-                if sol:
-                    bool_expr = sp.Or(*[sp.Eq(self.symbol, idx) for idx in sol])
-                    print(f"  Lösung Bedingung {cond}: {bool_expr}", flush=True)
-                else:
-                    print(f"  Lösung Bedingung {cond}: Keine Lösung", flush=True)
-                
-                # TODO So nimmt er einfach alle Werte und guckt, ob einer ==0 ist, aber wenn es keiner ist?
-                #sol = LUT.valid_indices(lambda v: v == 0)
-                #print(f"  Valid indices for LUT {LUT.name} where value == 0: {sol}", flush=True)
-
-                #sol = sp.solveset(sp.Eq(LUT(self.symbol), 0), self.symbol, domain=sp.Range(0, len(LUT.table_data)))
-                #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
-
+            if cond == True:
+                continue
+            if cond == False:
+                raise NotImplementedError("Condition is always false, no solution possible. TODO")
+            # Versuche, die Gleichung nach self.symbol zu lösen
+            eq = sp.Eq(cond.lhs, 0)
+            # Sonderfall: Enthält die Gleichung eine LookupTable-Funktion?
+            lut_funcs = [f for f in cond.lhs.atoms(sp.Function) if isinstance(f, LookupTable)]
+            if lut_funcs:
+                # Für jede gefundene LUT: Finde alle Indizes, für die LUT(index) == 0
+                for lut in lut_funcs:
+                    # Versuche, die Gleichung nach dem Argument der LUT zu lösen
+                    arg = lut.args[0]
+                    # Check for indiceis where LUT(arg) == rhs (usually 0)
+                    indices = lut.func.preimage(eq.rhs)
+                    for idx in indices:
+                        # Falls arg == self.symbol, ist idx direkt ein Testwert
+                        # Falls arg ein Ausdruck ist (z.B. 2*x1), löse nach self.symbol
+                        if arg == self.symbol:
+                            solved_values.add(sp.Integer(idx))
+                        else:
+                            # Löst z.B. 2*x1 == idx nach x1
+                            sols = sp.solve(sp.Eq(arg, idx), self.symbol)
+                            for s in sols:
+                                if s.is_real and 0 <= s <= 255:
+                                    solved_values.add(int(s))
             else:
-            
-                #cond.lhs = LUT.as_piecewise(self.symbol)
-
-                # Solve each condition with 0 to the symbol TODO zunächst nur ein Symbol x1
-                eq = sp.Eq(cond.lhs, 0)
-                sol = sp.solve(eq, self.symbol)
-                #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
-
-            # Some equations solve by <, some by <= and vise versa, so we test both sides of the solution
-            for s in sol:
+                # Allgemeiner Fall: Löse die Gleichung nach self.symbol
+                sols = sp.solve(eq, self.symbol)
+                for s in sols:
+                    if s.is_real and 0 <= s <= 255:
+                        solved_values.add(int(s))
+            # Optional: Teste Werte knapp unter/über der Grenze (z.B. für Ungleichungen)
+            for s in list(solved_values):
                 for off in (-1, +1):
-                    solved_values.add(int(max(0, min(255, s + off))))
+                    val = int(max(0, min(255, s + off)))
+                    solved_values.add(val)
+        # for cond in self.conditions:
+
+        #     if isinstance(cond.lhs, sp.Function) and issubclass(cond.lhs.func, LookupTable):
+        #         LUT = cond.lhs.func
+
+        #         sol = LUT.preimage(0)
+        #         if sol:
+        #             bool_expr = sp.Or(*[sp.Eq(self.symbol, idx) for idx in sol])
+        #             print(f"  Lösung Bedingung {cond}: {bool_expr}", flush=True)
+        #         else:
+        #             print(f"  Lösung Bedingung {cond}: Keine Lösung", flush=True)
+                
+        #         # TODO So nimmt er einfach alle Werte und guckt, ob einer ==0 ist, aber wenn es keiner ist?
+        #         #sol = LUT.valid_indices(lambda v: v == 0)
+        #         #print(f"  Valid indices for LUT {LUT.name} where value == 0: {sol}", flush=True)
+
+        #         #sol = sp.solveset(sp.Eq(LUT(self.symbol), 0), self.symbol, domain=sp.Range(0, len(LUT.table_data)))
+        #         #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
+
+        #     else:
+            
+        #         #cond.lhs = LUT.as_piecewise(self.symbol)
+
+        #         # Solve each condition with 0 to the symbol TODO zunächst nur ein Symbol x1
+        #         eq = sp.Eq(cond.lhs, 0)
+        #         sol = sp.solve(eq, self.symbol)
+        #         #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
+
+        #     # Some equations solve by <, some by <= and vise versa, so we test both sides of the solution
+        #     for s in sol:
+        #         for off in (-1, +1):
+        #             solved_values.add(int(max(0, min(255, s + off))))
         return solved_values
     
     def _create_lookup_table(self, ptr: int, item_size: int):
