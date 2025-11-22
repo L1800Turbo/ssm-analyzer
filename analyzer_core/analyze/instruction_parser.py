@@ -702,38 +702,7 @@ class CalcInstructionParser:
                 for off in (-1, +1):
                     val = int(max(0, min(255, s + off)))
                     solved_values.add(val)
-        # for cond in self.conditions:
-
-        #     if isinstance(cond.lhs, sp.Function) and issubclass(cond.lhs.func, LookupTable):
-        #         LUT = cond.lhs.func
-
-        #         sol = LUT.preimage(0)
-        #         if sol:
-        #             bool_expr = sp.Or(*[sp.Eq(self.symbol, idx) for idx in sol])
-        #             print(f"  Lösung Bedingung {cond}: {bool_expr}", flush=True)
-        #         else:
-        #             print(f"  Lösung Bedingung {cond}: Keine Lösung", flush=True)
-                
-        #         # TODO So nimmt er einfach alle Werte und guckt, ob einer ==0 ist, aber wenn es keiner ist?
-        #         #sol = LUT.valid_indices(lambda v: v == 0)
-        #         #print(f"  Valid indices for LUT {LUT.name} where value == 0: {sol}", flush=True)
-
-        #         #sol = sp.solveset(sp.Eq(LUT(self.symbol), 0), self.symbol, domain=sp.Range(0, len(LUT.table_data)))
-        #         #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
-
-        #     else:
-            
-        #         #cond.lhs = LUT.as_piecewise(self.symbol)
-
-        #         # Solve each condition with 0 to the symbol TODO zunächst nur ein Symbol x1
-        #         eq = sp.Eq(cond.lhs, 0)
-        #         sol = sp.solve(eq, self.symbol)
-        #         #print(f"  Lösung Bedingung {cond}: {sol}", flush=True)
-
-        #     # Some equations solve by <, some by <= and vise versa, so we test both sides of the solution
-        #     for s in sol:
-        #         for off in (-1, +1):
-        #             solved_values.add(int(max(0, min(255, s + off))))
+     
         return solved_values
     
     
@@ -772,15 +741,6 @@ class CalcInstructionParser:
         grouped: dict[sp.Expr | None, list[Boolean]] = {}
         for expr, cond in eq_pieces:
             grouped.setdefault(expr, []).append(cond)
-        # grouped: dict[str, tuple[sp.Expr, list[Boolean]]] = {}
-        # for expr, cond in eq_pieces:
-        #     key:str = sp.srepr(sp.simplify(expr))
-        #     if key in grouped:
-        #         grouped[key][1].append(cond)
-        #     else:
-        #         grouped[key] = (expr, [cond])
-
-            #grouped.setdefault(expr, []).append(cond)
 
         combined_equations: list[tuple[sp.Expr | None, Boolean]] = []
         #for expr, conds in grouped.items():

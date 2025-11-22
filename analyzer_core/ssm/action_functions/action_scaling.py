@@ -229,35 +229,6 @@ class SsmActionScalingFunction(SsmActionHelper):
 
             eq_pieces.append((subst_expression, sp.And(*subst_conditions)))
 
-
-        # # Remove duplicates with same condition
-        # eq_pieces = list(dict.fromkeys(eq_pieces))
-
-        # # Group by same expressions
-        # grouped: dict[sp.Expr | None, list[Boolean]] = {}
-        # for expr, cond in eq_pieces:
-        #     grouped.setdefault(expr, []).append(cond)
-        # # grouped: dict[str, tuple[sp.Expr, list[Boolean]]] = {}
-        # # for expr, cond in eq_pieces:
-        # #     key:str = sp.srepr(sp.simplify(expr))
-        # #     if key in grouped:
-        # #         grouped[key][1].append(cond)
-        # #     else:
-        # #         grouped[key] = (expr, [cond])
-
-        #     #grouped.setdefault(expr, []).append(cond)
-
-        # combined_equations: list[tuple[sp.Expr | None, Boolean]] = []
-        # #for expr, conds in grouped.items():
-        # for expr, conds in grouped.items():
-        #     condition = sp.Or(*conds)
-        #     simplified_condition = sp.simplify(condition, force=True)
-            
-        #     combined_equations.append((expr, simplified_condition))
-
-        # final_expr_subst = sp.Piecewise(*combined_equations)
-        # final_expr = LutHelper.reverse_substitute_lookup_tables(self.luts, final_expr_subst)
-
         final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
 
         print(f"Final Scaling Expression: {final_expr}", flush=True)
