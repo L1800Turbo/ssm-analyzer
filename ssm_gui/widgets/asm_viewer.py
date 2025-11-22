@@ -4,7 +4,7 @@ ASM/ROM Viewer Widget (extended)
 - No nested classes.
 - Uses external services/classes:
     analyzer_core.service.RomService
-    analyzer_core.data.rom_image.RomImage, optionally SSM1RomImage
+    analyzer_core.data.rom_image.RomImage
     analyzer_core.disasm.insn_model.Instruction
 
 New features:
@@ -395,19 +395,11 @@ class AsmViewerWidget(QWidget):
         #self._load_breakpoints()
 
         # Reset selection (if available)
-        reset_addr = self._try_get_reset_vector(self.rom_image)
+        reset_addr = self.rom_image.reset_vector()
         if reset_addr is not None:
             self._select_address(reset_addr, prefer_start=True)
 
     # ---- Build display ----
-    def _try_get_reset_vector(self, rom_image: RomImage) -> Optional[int]:
-        try:
-            from analyzer_core.data.rom_image import SSM1RomImage  # type: ignore
-            if isinstance(rom_image, SSM1RomImage):
-                return rom_image.reset_vector()
-        except Exception:
-            pass
-        return None
 
     def _build_display_items(
         self,
@@ -432,7 +424,7 @@ class AsmViewerWidget(QWidget):
                 code_bytes.add((addr + off) & 0xFFFF)
 
         # Function starts/callers from core
-        reset_addr = self._try_get_reset_vector(rom_image)
+        reset_addr = self.rom_image.reset_vector()
         functions: Dict[int, FunctionInfo] = extract_functions_and_callers(
             instructions, reset_addr, self.curr_rom_service.rom_cfg)
 

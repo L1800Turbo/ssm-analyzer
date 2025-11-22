@@ -56,14 +56,15 @@ class RomIdEntryAnalyzer:
                 em.read8(current_ssm_cmd),
                 em.read8(current_ssm_protocol_version)
             ))
+            em.mock_return()
 
-            # TODO Quit-Mock-Funktion
-            # Just for a parameter in rts, rts wouldn't need it
-            insn = em.dasm.disassemble_step(em.PC)
-            if insn:
-                em.rts(insn)
-            else:
-                raise RuntimeError("Couldn't fetch instruction in mock_set_communication_protocol")
+            # # TODO Quit-Mock-Funktion
+            # # Just for a parameter in rts, rts wouldn't need it
+            # insn = em.dasm.disassemble_step(em.PC)
+            # if insn:
+            #     em.rts(insn)
+            # else:
+            #     raise RuntimeError("Couldn't fetch instruction in mock_set_communication_protocol")
 
 
         self.emulator.hooks.add_read_hook(ssm_receive_status, hook_ssm_check_receive_status_set_error)

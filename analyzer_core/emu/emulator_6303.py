@@ -1,7 +1,6 @@
 # analyzer_core/emu/emulator_6303.py
 from __future__ import annotations
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Optional, Callable, Dict
 import logging
 
@@ -75,12 +74,14 @@ class Emulator6303:
 
         self.asm_logger: dict[str, Callable[[Instruction, MemAccess], None]] = {}
 
+        self.last_run_steps = 0
+
         # TODO Noch registrieren und hier weg
-        try:
-            log_path = Path("logs/asm_trace.html")
-            self.asm_html_logger = AsmHtmlLogger(log_path, append=True)
-        except Exception:
-            self.asm_html_logger = None
+        # try:
+        #     log_path = Path("logs/asm_trace.html")
+        #     self.asm_html_logger = AsmHtmlLogger(log_path, append=True)
+        # except Exception:
+        #     self.asm_html_logger = None
 
 
     # --- Helpers for tracing / logging ---
@@ -338,10 +339,10 @@ class Emulator6303:
 
 
             # TODO Entfallen lassen und dann auch als logger registrieren
-            if self.asm_html_logger is not None:
-                self.asm_html_logger.log(asm_step)
-            else:
-                print(asm_step)
+            #if self.asm_html_logger is not None:
+            #    self.asm_html_logger.log(asm_step)
+            #else:
+            #    print(asm_step)
 
             # Take care of post-hooks
             for pc in list(self.hooks.waiting_for_post_hook.keys()):
@@ -371,6 +372,9 @@ class Emulator6303:
         Run from the current PC into functions and back until a RTS/RTI from the current level is reached.
         """
 
+        # Only for debug
+        start_pc = self.PC
+
         # If we want to run until this level's rts/rti or abort at specific PC
         if abort_pc is not None:
             sentinel = abort_pc & 0xFFFF
@@ -386,14 +390,18 @@ class Emulator6303:
             if self.PC == sentinel:
                 break
 
-            if self.PC == 0xA9AB:
-                pass
+            #if self.PC == 0xA9AB:
+            #    pass
 
             last_step = self.step()
             steps += 1
 
         if steps >= max_steps:
             raise TimeoutError("run_function_end: step limit exceeded")
+        
+        self.last_run_steps = steps
+
+        print(f"Emulated steps from {start_pc:04X}: {steps}")
 
         return last_step
 

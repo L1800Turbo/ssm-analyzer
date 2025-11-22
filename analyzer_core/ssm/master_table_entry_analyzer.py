@@ -28,8 +28,8 @@ class MasterTableEntryAnalyzer:
         if self.mt_entry.upper_label is None:
             raise EmulationError(f"Upper label for MasterTable entry {self.mt_entry.menu_item_str()} is None.")
         
-        if self.mt_entry.menu_item_str() == "FA0":
-            pass
+        #if self.mt_entry.menu_item_str() == "FA0":
+        #    pass
         
         self.mt_entry.action = SsmAction(
             action_type=ActionType.UNDEFINED,
@@ -132,6 +132,9 @@ class MasterTableEntryAnalyzer:
 
             # TODO Wird da was gemacht??
             SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
+
+            if self.mt_entry.action:
+                self.mt_entry.action.action_type = ActionType.YEAR
         
         elif action_fn.name == "action_read_ecu":
             from analyzer_core.ssm.action_functions.action_read_ecu import SsmActionReadEcu
@@ -139,6 +142,9 @@ class MasterTableEntryAnalyzer:
             action_helper._add_function_mocks() # TODO weg?
 
             #SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
+
+            if self.mt_entry.action:
+                self.mt_entry.action.action_type = ActionType.READ_ADDRESS
 
         # TODO für Read-Funktion und was da noch kommt:
         # MAnche wollen ein Lower Scaling, manche nicht.

@@ -107,7 +107,7 @@ tr:nth-child(odd){background:#fff} tr:nth-child(even){background:#fbfbfb}
             # never raise from rotation
             pass
 
-    def log(self, ma: "MemAccess") -> None:
+    def log(self, instr, ma: "MemAccess") -> None:
         """
         Append a single compact table row for the MemAccess.
         Keep each row short to avoid huge HTML size.

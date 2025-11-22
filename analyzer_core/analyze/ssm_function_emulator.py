@@ -1,8 +1,10 @@
 import logging
+from pathlib import Path
 from analyzer_core.config.memory_map import MemoryMap
 from analyzer_core.config.rom_config import OFFSET_PIN_ASSIGNMENTS, RomConfig
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableInfo, RomIdTableEntry_256kb, RomIdTableEntry_512kb, RomIdTableInfo
 from analyzer_core.data.rom_image import RomImage
+from analyzer_core.emu.asm_html_logger import AsmHtmlLogger
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.emu.memory_manager import MemoryManager
 from analyzer_core.ssm.master_table_analyzer import MasterTableAnalyzer
@@ -129,6 +131,12 @@ class SsmFunctionEmulator:
             #self.add_default_hooks(emulator)
             emulator.set_pc(0xFFFF)
 
+            # Initialize a logger for asm instructions
+            
+            log_path = Path(f"logs/{self.rom_image.file_name}_{current_device.name}_asm_trace.html")
+            asm_html_logger = AsmHtmlLogger(log_path, append=False)
+            emulator.add_logger("html_logger", asm_html_logger.log)
+
             # Adjust offset for the current device (mapped ROM area)
             self.set_attached_rom_area(emulator.mem, current_device)
 
@@ -136,47 +144,3 @@ class SsmFunctionEmulator:
             romid_tbl = RomIdTableAnalyzer(emulator, current_table_info, self.rom_cfg)
             romid_tbl.enrich_entries(self.rom_cfg, current_device)
             # master_table was created inside enrich_entries for each entry
-
-    # TODO auf Dauer wieder weg
-    # def add_default_hooks(self, emulator: Emulator6303):
-
-    #     # TODO Doppelt aktuell
-    #     def get_screen_line(em: Emulator6303, var_name: str) -> str:
-    #         # Collect printed data from screen buffer
-    #         ssm_display_line_buf_ptr = self.rom_cfg.address_by_name(var_name)
-    #         ssm_display_line_buf = em.mem.read_bytes(ssm_display_line_buf_ptr, 16)
-    #         return self.rom_cfg.byte_interpreter.render(ssm_display_line_buf)
-
-    #     # Add default hooks to config
-    #     def mock_print_upper_screen(em: Emulator6303):
-
-    #         print(f"Upper Screen [{get_screen_line(em, 'ssm_display_y0_x0')}]", flush=True)
-    #         insn = em.dasm.disassemble_step(em.PC) # TODO anders
-    #         if not insn:
-    #             raise RuntimeError("Couldn't fetch mock_print_upper_screen instruction")
-    #         em.clc(insn)
-    #         em.rts(insn)
-
-    #     def mock_print_lower_screen(em: Emulator6303):
-    #         print(f"Lower Screen [{get_screen_line(em, 'ssm_display_y1_x0')}]", flush=True)
-    #         insn = em.dasm.disassemble_step(em.PC)
-    #         if not insn:
-    #             raise RuntimeError("Couldn't fetch mock_print_lower_screen instruction")
-    #         em.clc(insn)
-    #         em.rts(insn)
-
-    #     emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
-    #     emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
-
-        
-
-        
-
-        # TODO Wait_ms
-    
-
-
-
-
-
-

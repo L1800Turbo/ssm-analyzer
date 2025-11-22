@@ -26,25 +26,6 @@ class RomService:
         self.logger = logging.getLogger(__name__)
         self.rom_cfg = RomConfig()
 
-        # TODO nur zum testen
-        #self.config.add_function("wait_ms", 0xBD84)
-        
-    def load(self, rom_path: Path) -> tuple[RomImage, RomConfig, dict]:
-        """Load ROM, config and initial metadata."""
-        from analyzer_core.data.rom_image import SSM1RomImage
-        rom_image = RomImage(rom_path.read_bytes())
-        config = RomConfig() #TODO weg
-        if isinstance(rom_image, SSM1RomImage):
-            reset_vector = rom_image.reset_vector()
-        else:
-            reset_vector = None
-        metadata = {
-            "reset_vector": reset_vector,
-            "size": len(rom_image.rom),
-            # Add more metadata extraction as needed
-        }
-        return rom_image, config, metadata
-
     # TODO Ruft noch keiner auf gerade -> Hier könnte die Analyse-Pipeline integriert werden
     def analyze(self, rom_image: RomImage):
 
@@ -117,7 +98,7 @@ class RomService:
     # TODO Das RomImage dann nicht in Self rein? muss ja gar nicht bis in die GUI getragen werden?
     def load_rom_image(self, rom_path: Path) -> RomImage:
         """Load ROM image from file."""
-        return RomImage(rom_path.read_bytes())
+        return RomImage(rom_path)    
 
     def disassemble_from_reset(self, rom_image: RomImage) -> Tuple[dict[int, Instruction], dict]:
         """
@@ -129,11 +110,7 @@ class RomService:
         instructions: dict[int, Instruction] = {}
         call_tree: dict = {}
         try:
-            from analyzer_core.data.rom_image import SSM1RomImage
-            if isinstance(rom_image, SSM1RomImage):
-                start_addr = rom_image.reset_vector()
-            else:
-                start_addr = int.from_bytes(rom_image.rom[-4:-2], 'big')
+            start_addr = rom_image.reset_vector()
         except Exception:
             self.logger.warning("Failed to determine start address, defaulting to 0x0000")
             start_addr = 0x0000

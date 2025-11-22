@@ -8,9 +8,19 @@ from typing import List, Optional
 class RomImageError(Exception):
     pass
 
-@dataclass
 class RomImage:
-    rom: bytes
+    def __init__(self, rom_file: Path):
+        self.rom = rom_file.read_bytes()
+        self.file_name = rom_file.name
+
+        self.logger = logging.getLogger(f"{__name__}_{self.file_name}")
+
+
+    def reset_vector(self) -> int:
+        '''
+        Return the reset vector address from the ROM image.
+        '''
+        return int.from_bytes(self.rom[0xFFFC:0xFFFE], 'big')
 
     def find_bytes(self, needle: bytes, start: int = 0) -> Optional[int]:
         '''Find the first occurrence of a given byte sequence.'''
@@ -46,19 +56,5 @@ class RomImage:
         return strings[0]
     
 
-
-class SSM1RomImage(RomImage):
-    def __init__(self, rom_file: Path):
-        self.rom = rom_file.read_bytes()
-        self.file_name = rom_file.name
-
-        self.logger = logging.getLogger(f"{__name__}_{self.file_name}")
-
-
-    def reset_vector(self) -> int:
-        '''
-        Return the reset vector address from the ROM image.
-        '''
-        return int.from_bytes(self.rom[0xFFFC:0xFFFE], 'big')
     
     
