@@ -1,6 +1,6 @@
 from enum import Enum, auto
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 from analyzer_core.analyze.repo import PatternRepository
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo, RomScalingDefinition
@@ -14,6 +14,7 @@ class RomVarType(Enum):
     VARIABLE = auto()
     PORT = auto()
     STRING = auto()
+    LOOKUP_TABLE = auto()
 
 @dataclass
 class RomVarDefinition:
@@ -49,6 +50,7 @@ class RomConfig:
         self.call_tree: dict = {}
         self.action_addresses: set[int] = set()
         self.scaling_addresses: dict[int, RomScalingDefinition] = {}
+        self.lookup_tables: dict[str, Callable] = {}
 
         # Pattern for detection
         self.pattern_repo: PatternRepository
@@ -88,6 +90,10 @@ class RomConfig:
 
     def add_string(self, name: str, address: int, length: int):
         var = RomVarDefinition(name=name, address=address, type=RomVarType.STRING, size=length)
+        self._register(var)
+    
+    def add_lut(self, name: str, address: int, size: int):
+        var = RomVarDefinition(name=name, address=address, type=RomVarType.LOOKUP_TABLE, size=size)
         self._register(var)
 
     def add_function_address(self, name:str, address:int):

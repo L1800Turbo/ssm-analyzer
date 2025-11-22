@@ -65,6 +65,10 @@ class LookupTable(sp.Function):
 
 class LookupTableHelper:
 
+    @staticmethod
+    def table_name(ptr:int):
+        return f"LUT_{ptr:04X}"
+
     @classmethod
     def create_get_lookup_table(cls, emu: Emulator6303, ptr: int, item_size: int, possible_index_values: list[int]):
         """Erzeugt eine SymPy-Funktion für eine bestimmte Lookup-Tabelle."""
@@ -72,7 +76,7 @@ class LookupTableHelper:
         byte_interpreter = ByteInterpreter()
 
 
-        table_name = f"LUT_{ptr:04X}"
+        table_name = LookupTableHelper.table_name(ptr)
 
         items: dict[int, int|str] = {}
 
@@ -114,7 +118,7 @@ class LookupTableHelper:
         )
     
     @classmethod
-    def reverse_substitute_lookup_tables(cls, luts: list[Callable], expr: sp.Expr) -> sp.Expr:
+    def reverse_substitute_lookup_tables(cls, luts: dict[str, Callable], expr: sp.Expr) -> sp.Expr:
         """
         Ersetzt alle Symbole wie LUT_xxxx(nn) wieder durch die entsprechende LookupTable-Funktion.
         """
@@ -123,9 +127,12 @@ class LookupTableHelper:
             name = str(sym)
             if name.startswith("LUT_") and "(" in name and name.endswith(")"):
                 lut_name, arg_str = name.split("(", 1)
-                lut_name = lut_name
-                arg_str = arg_str[:-1]  # Klammer entfernen
+                arg_str = arg_str[:-1]  # Remove ")"
+                arg = sp.sympify(arg_str)
+
                 # Finde die LookupTable-Klasse mit passendem Namen
+
+                return luts[lut_name](arg)
                 for lut_cls in luts:
                     if getattr(lut_cls, "name", None) == lut_name:
                         # Argument als Symbol oder Zahl

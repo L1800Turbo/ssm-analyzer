@@ -8,7 +8,7 @@ import sympy as sp
 from sympy.logic.boolalg import Boolean
 from sympy.core.relational import Relational
 from pyparsing import Callable
-from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableHelper as LutHelper
+from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableHelper
 from analyzer_core.config.memory_map import MemoryRegion, RegionKind, RegionKind
 from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.disasm.capstone_wrap import OperandType
@@ -86,7 +86,6 @@ class CalcInstructionParser:
         self.multi_step_complement: TwoStepComplement = TwoStepComplement.NONE
         self.multi_step_divide: TwoStepDivide = TwoStepDivide.NONE
         self.lut_address: int | None = None
-        self.luts: list[Callable] = []
 
         # Don't go into functions for now
         self.jsr_level = 0
@@ -210,24 +209,35 @@ class CalcInstructionParser:
     def add_set_lookup_table(self):
         if self.lut_address is None or self.lut_expr is None:
             raise RuntimeError("Expected a defined LUT address and expression before adding a LUT")
-
+    
         factor, index_var = self._extract_factor_and_index(self.lut_expr)
-        possible_idx_vals = self._get_possible_index_values(index_var)
+        
+        table_name = LookupTableHelper.table_name(self.lut_address)
+        if table_name in self.rom_cfg.lookup_tables:
+            # LUT is already created (by a previous scaling or a previous, branch dependend run)
+            lut = self.rom_cfg.lookup_tables[table_name]
+        else:
 
-        # We've got a lookup table, create a function for it
-        LUT = LutHelper.create_get_lookup_table(
-            self.emulator, 
-            self.lut_address,
-            item_size=factor,
-            possible_index_values=possible_idx_vals) # TODO size noch dynamisch, wird immer 0,x genommen so
+            possible_idx_vals = self._get_possible_index_values(index_var)
 
-        self.luts.append(LUT)
+            # We've got a lookup table, create a function for it
+            lut = LookupTableHelper.create_get_lookup_table(
+                self.emulator, 
+                self.lut_address,
+                item_size=factor,
+                possible_index_values=possible_idx_vals) # TODO size noch dynamisch, wird immer 0,x genommen so
+        
+            print(f"Lookup table creation to address 0x{self.lut_address:04X} with index {self.current_expr}", flush=True)
+
+
+            self.rom_cfg.lookup_tables[table_name] = lut
+
+            # Also save the value to the known variables
+            self.rom_cfg.add_lut(table_name, self.lut_address, factor * max(possible_idx_vals))
 
         self.raw_calculations.append(f"[{self.lut_expr}] -> LUT(addr=0x{self.lut_address:04X})")
-        self.current_expr = LUT(index_var)  # type: ignore
+        self.current_expr = lut(index_var)  # type: ignore
         #self.current_expr = sp.Symbol(f"{LUT.name}({index_var})")  # type: ignore
-
-        print(f"Lookup table creation to address 0x{self.lut_address:04X} with index {self.current_expr}", flush=True)
 
         self.lut_address = None
         self.lut_expr = None
@@ -766,10 +776,10 @@ class CalcInstructionParser:
             mod_val = index_var.args[1]
             if mod_val.is_Integer:
                 return list(range(sp.Integer(mod_val)))
-        # Symbol-Fall: x1
+        # Symbol case: x1
         if index_var.is_Symbol:
             return list(range(256))  # 8 Bit
-        # Sonst: Unbekannt, gib leere Liste zurück
+        # Otherwise unknown, return empty list
         return []
     
     def negate_current_expression(self):
@@ -804,5 +814,5 @@ class CalcInstructionParser:
         final_expr_subst = sp.Piecewise(*combined_equations)
         
         # Get Lookup table objects back if included
-        return LutHelper.reverse_substitute_lookup_tables(self.luts, final_expr_subst)
+        return LookupTableHelper.reverse_substitute_lookup_tables(self.rom_cfg.lookup_tables, final_expr_subst)
             

@@ -174,6 +174,9 @@ class SsmActionScalingFunction(SsmActionHelper):
         # Reset wait counter in main loop wich lets the scaling function run only every 4th time
         self.emulator.mem.write(self.rom_cfg.address_by_name("master_table_run_scaling_wait_counter"), 4)
 
+        # Reset decimal value
+        self.emulator.mem.write(self.rom_cfg.address_by_name('decimal_places'), 0)
+
     def run_function(self):
         """Emulate scaling function with multiple inputs to determine scaling."""
 

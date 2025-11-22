@@ -327,6 +327,9 @@ class Emulator6303:
             if instr.address == 0x31C2 or instr.address == 0x2C36:
                 pass
 
+            if instr.address == 0x33F2:
+                pass
+
             # TODO hier die steps auswerten?
             # TODO in eigene Log schmeißen direkt
 
