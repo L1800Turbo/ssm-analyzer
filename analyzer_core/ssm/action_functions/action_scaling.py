@@ -7,6 +7,7 @@ from analyzer_core.analyze.instruction_parser import CalcInstructionParser
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.rom_config import RomConfig, RomScalingDefinition
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, RomSwitchDefinition
+from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableHelper as LutHelper
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.disasm.insn_model import Instruction
 from analyzer_core.emu.emulator_6303 import Emulator6303
@@ -222,33 +223,42 @@ class SsmActionScalingFunction(SsmActionHelper):
                     ssm_inputs.append(value)
                     #print(f"    Adding new test input value: {value}", flush=True)
 
-            eq_pieces.append((self.instr_parser.current_expr, sp.And(*self.instr_parser.conditions)))
+            # Get current expression and conditions from the instruction parser and substitude to make simplification by sympy easier
+            subst_expression = LutHelper.substitute_lookup_tables(self.instr_parser.current_expr)
+            subst_conditions = [LutHelper.substitute_lookup_tables(cond) for cond in self.instr_parser.conditions]
 
-        # Remove duplicates with same condition
-        eq_pieces = list(dict.fromkeys(eq_pieces))
+            eq_pieces.append((subst_expression, sp.And(*subst_conditions)))
 
-        # Group by same expressions
-        #grouped: dict[sp.Expr | None, list[Boolean]] = {}
-        #for expr, cond in eq_pieces:
-        grouped: dict[str, tuple[sp.Expr, list[Boolean]]] = {}
-        for expr, cond in eq_pieces:
-            key:str = sp.srepr(sp.simplify(expr))
-            if key in grouped:
-                grouped[key][1].append(cond)
-            else:
-                grouped[key] = (expr, [cond])
 
-            #grouped.setdefault(expr, []).append(cond)
+        # # Remove duplicates with same condition
+        # eq_pieces = list(dict.fromkeys(eq_pieces))
 
-        combined_equations: list[tuple[sp.Expr | None, Boolean]] = []
-        #for expr, conds in grouped.items():
-        for expr, conds in grouped.values(): # Not items, take the tuple
-            condition = sp.Or(*conds)
-            simplified_condition = sp.simplify(condition, force=True)
+        # # Group by same expressions
+        # grouped: dict[sp.Expr | None, list[Boolean]] = {}
+        # for expr, cond in eq_pieces:
+        #     grouped.setdefault(expr, []).append(cond)
+        # # grouped: dict[str, tuple[sp.Expr, list[Boolean]]] = {}
+        # # for expr, cond in eq_pieces:
+        # #     key:str = sp.srepr(sp.simplify(expr))
+        # #     if key in grouped:
+        # #         grouped[key][1].append(cond)
+        # #     else:
+        # #         grouped[key] = (expr, [cond])
+
+        #     #grouped.setdefault(expr, []).append(cond)
+
+        # combined_equations: list[tuple[sp.Expr | None, Boolean]] = []
+        # #for expr, conds in grouped.items():
+        # for expr, conds in grouped.items():
+        #     condition = sp.Or(*conds)
+        #     simplified_condition = sp.simplify(condition, force=True)
             
-            combined_equations.append((expr, simplified_condition))
+        #     combined_equations.append((expr, simplified_condition))
 
-        final_expr = sp.Piecewise(*combined_equations)
+        # final_expr_subst = sp.Piecewise(*combined_equations)
+        # final_expr = LutHelper.reverse_substitute_lookup_tables(self.luts, final_expr_subst)
+
+        final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
 
         print(f"Final Scaling Expression: {final_expr}", flush=True)
 
@@ -262,6 +272,7 @@ class SsmActionScalingFunction(SsmActionHelper):
                 scaling=sp.simplify(final_expr, force=True),
                 precision_decimals=decimal_places,
                 unit=self.unit,
+                lookup_table=LutHelper.get_lookup_table_values(final_expr),
                 functions=[self.mt_entry.item_label] if self.mt_entry.item_label else []
             )
 

@@ -8,6 +8,7 @@ import sympy as sp
 from sympy.logic.boolalg import Boolean
 from sympy.core.relational import Relational
 from pyparsing import Callable
+from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableHelper as LutHelper
 from analyzer_core.config.memory_map import MemoryRegion, RegionKind, RegionKind
 from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.disasm.capstone_wrap import OperandType
@@ -19,69 +20,6 @@ from analyzer_core.emu.tracing import MemAccess
 class ParserError(Exception):
     pass
 
-class LookupTable(sp.Function):
-    nargs = 1
-    table_data = ()
-    table_ptr = None
-    #item_size = item_size
-    name = "LUT"
-
-    @classmethod
-    def eval(cls, *args): # type: ignore
-        # Nur auswerten, wenn x eine konkrete Zahl ist
-        if args[0].is_Integer:
-            idx = int(args[0])
-            if 0 <= idx < len(cls.table_data):
-                return sp.Integer(cls._interpret_value(cls.table_data[idx]))
-                #return sp.Integer(cls.table_data[idx])
-            else:
-                return sp.S.NaN
-        return None  # sonst symbolisch lassen
-    
-    @staticmethod
-    def _interpret_value(v):
-        """LUT-Werte (16 Bit) als signed interpretieren."""
-        v = int(v) & 0xFFFF
-        if v & 0x8000:
-            return v - 0x10000
-        return v
-    
-    # @classmethod
-    # def value(cls, idx):
-    #     return cls._interpret_value(cls.table_data[idx])
-
-    # @classmethod
-    # def valid_indices(cls, predicate):
-    #     """
-    #     Liefert alle i (0..255), für die predicate(value) True ist.
-    #     predicate: Funktion v -> bool
-    #     """
-    #     out = []
-    #     for i, raw in enumerate(cls.table_data):
-    #         v = cls._interpret_value(raw)
-    #         if predicate(v):
-    #             out.append(i)
-    #     return out
-
-    def _eval_rewrite_as_piecewise(self, x, **kwargs):
-        """Erzeuge eine Piecewise-Darstellung LUT(symbol)."""
-        pieces = [(sp.S(val), sp.Eq(x, iter)) for iter, val in enumerate(self.table_data)]
-        pieces.append((sp.S.NaN, sp.S.true))  # Default-Fall
-        return sp.Piecewise(*pieces)
-    
-    def _eval_is_real(self):
-        return all(sp.S(val).is_real for val in self.table_data)
-    
-    @classmethod
-    def preimage(cls, value):
-        """Gibt alle Indizes i zurück, für die LUT(i) == value gilt."""
-        value = sp.S(value)
-        indizes = [i for i, v in enumerate(cls.table_data) if sp.S(v) == value]
-        return sp.FiniteSet(*indizes)
-
-    @classmethod
-    def __repr__(cls):
-        return f"<LookupTable {cls.name} at 0x{cls.table_ptr:04X}>"
 
 class TwoStepComplement(IntEnum):
     NONE = 0
@@ -139,13 +77,14 @@ class CalcInstructionParser:
         self.raw_calculations: list[str] = []
         #self.conditions: list[list[str]] = []
 
-        self.current_expr: Optional[sp.Expr] = None
+        self.current_expr: sp.Expr = sp.Expr()
         self.last_tested_expr: Optional[sp.Expr] = None
 
         self.conditions: list[Relational] = []
         self.multi_step_complement: TwoStepComplement = TwoStepComplement.NONE
         self.multi_step_divide: TwoStepDivide = TwoStepDivide.NONE
         self.lut_address: int | None = None
+        self.luts: list[Callable] = []
 
         # Don't go into functions for now
         self.jsr_level = 0
@@ -255,10 +194,13 @@ class CalcInstructionParser:
                     factor, index_var = self._extract_item_size_index_var(self.lut_expr)
 
                     # We've got a lookup table, create a function for it
-                    LUT = self._create_lookup_table(self.lut_address, item_size=factor) # TODO size noch dynamisch, wird immer 0,x genommen so
+                    LUT = LutHelper.create_get_lookup_table(self.emulator, self.lut_address, item_size=factor) # TODO size noch dynamisch, wird immer 0,x genommen so
+
+                    self.luts.append(LUT)
 
                     self.raw_calculations.append(f"[{self.lut_expr}] -> LUT(addr=0x{self.lut_address:04X})")
                     self.current_expr = LUT(index_var)  # type: ignore
+                    #self.current_expr = sp.Symbol(f"{LUT.name}({index_var})")  # type: ignore
 
                     print(f"Lookup table access at 0x{instr.address:04X} to address 0x{current_lut_address:04X} with index {self.current_expr}", flush=True)
 
@@ -794,33 +736,8 @@ class CalcInstructionParser:
         #             solved_values.add(int(max(0, min(255, s + off))))
         return solved_values
     
-    def _create_lookup_table(self, ptr: int, item_size: int):
-        """Erzeugt eine SymPy-Funktion für eine bestimmte Lookup-Tabelle."""
-
-        table_name = f"LUT_{ptr:04X}"
-
-        items = []
-        for i in range(256):
-            if item_size == 1:
-                items.append(self.emulator.read8(ptr + i))
-            elif item_size == 2:
-                items.append(self.emulator.read16(ptr + i * 2))
-            else:
-                raise ValueError("Unsupported item size for lookup table.")
-        
-        return type(table_name, (LookupTable,), {
-            "table_data": tuple(items),
-            "table_ptr": ptr,
-            #"item_size": item_size,
-            "name": table_name
-        })
-            
-
-        
-
-        _LookupTable.__name__ = table_name
-        return _LookupTable
     
+        
     def _extract_item_size_index_var(self, expr: sp.Expr) -> tuple[int, sp.Basic]:
         vars = list(expr.free_symbols)
         if len(vars) != 1:
@@ -846,3 +763,35 @@ class CalcInstructionParser:
         if decimal_places > 0:
             self.raw_calculations.append(f" / {10 ** decimal_places}")
             self.current_expr = self.current_expr / (10 ** decimal_places) 
+
+    def finalize_simplify_equations(self, eq_pieces: list[tuple[sp.Expr | None, Boolean]]) -> sp.Expr:
+        # Remove duplicates with same condition
+        eq_pieces = list(dict.fromkeys(eq_pieces))
+
+        # Group by same expressions
+        grouped: dict[sp.Expr | None, list[Boolean]] = {}
+        for expr, cond in eq_pieces:
+            grouped.setdefault(expr, []).append(cond)
+        # grouped: dict[str, tuple[sp.Expr, list[Boolean]]] = {}
+        # for expr, cond in eq_pieces:
+        #     key:str = sp.srepr(sp.simplify(expr))
+        #     if key in grouped:
+        #         grouped[key][1].append(cond)
+        #     else:
+        #         grouped[key] = (expr, [cond])
+
+            #grouped.setdefault(expr, []).append(cond)
+
+        combined_equations: list[tuple[sp.Expr | None, Boolean]] = []
+        #for expr, conds in grouped.items():
+        for expr, conds in grouped.items():
+            condition = sp.Or(*conds)
+            simplified_condition = sp.simplify(condition, force=True)
+            
+            combined_equations.append((expr, simplified_condition))
+
+        final_expr_subst = sp.Piecewise(*combined_equations)
+        
+        # Get Lookup table objects back if included
+        return LutHelper.reverse_substitute_lookup_tables(self.luts, final_expr_subst)
+            
