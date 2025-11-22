@@ -5,6 +5,7 @@ import sympy as sp
 from sympy.logic.boolalg import Boolean
 from analyzer_core.analyze.instruction_parser import CalcInstructionParser
 from analyzer_core.analyze.pattern_detector import PatternDetector
+from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.config.rom_config import RomConfig, RomScalingDefinition
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, RomSwitchDefinition
 from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableHelper as LutHelper
@@ -288,7 +289,8 @@ class SsmActionScalingFunction(SsmActionHelper):
         lower_label_pointer = self.romid_entry.menuitems_lower_label_pointer + self.mt_entry.lower_label_index * 16
 
         lower_label_raw = self.emulator.mem.read_bytes(lower_label_pointer, 16)
-        lower_label_str = self.rom_cfg.byte_interpreter.render(lower_label_raw)
+        byte_interpreter = ByteInterpreter()
+        lower_label_str = byte_interpreter.render(lower_label_raw)
 
         self.unit = lower_label_str.strip()
 

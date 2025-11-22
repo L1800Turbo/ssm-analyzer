@@ -5,6 +5,9 @@ from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.emu.memory_manager import MemoryManager
 
+from analyzer_core.config.byte_interpreter import ByteInterpreter
+
+
 class SsmEmuHelper:
 
     @classmethod
@@ -25,7 +28,8 @@ class SsmEmuHelper:
         # Collect printed data from screen buffer
         ssm_display_line_buf_ptr = rom_cfg.address_by_name(var_name)
         ssm_display_line_buf = em.mem.read_bytes(ssm_display_line_buf_ptr, 16)
-        return rom_cfg.byte_interpreter.render(ssm_display_line_buf)
+        byte_interpreter = ByteInterpreter()
+        return byte_interpreter.render(ssm_display_line_buf)
 
     @classmethod
     def hook_fn_read_from_ecu(cls, rom_cfg:RomConfig, emulator: Emulator6303):

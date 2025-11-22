@@ -64,6 +64,8 @@ class CalcInstructionParser:
             rom_cfg.address_by_name("divide"): self._divide,
             rom_cfg.address_by_name("mul16bit"): self._mul16bit,
             #rom_cfg.address_by_name("print_lower_value"): lambda instr, access: None,
+
+            # fn_copy_to_lower_screen_buffer: ggfs ergänzen, zum mocken, damit die Nachricht verschwindet, oder auch um die LUT zu verarbeiten. aktuell abx
         }
 
         # TODO Hardcoded auf eins zunächjst
@@ -187,34 +189,49 @@ class CalcInstructionParser:
 
             # If we load indirect with X register (e.g. ldd 0, x), we should check if this is an address from the static ROM area.
             # In that case it's likely to be a lookup table access
-            if instr.target_value is not None and self.lut_address is not None and self.lut_expr is not None:
-                current_lut_address= self.saved_registers.X + instr.target_value
+            if instr.target_value is None:
+                raise RuntimeError(f"Expected target for instruction {instr.mnemonic}")
+            
+            current_lut_address = self.saved_registers.X + instr.target_value
+            if self.lut_address is not None and self.lut_expr is not None:
+            
                 # Check if we're still accessing ROM data -> then it's a LUT access
                 if self._check_for_rom_address(current_lut_address):
-                    factor, index_var = self._extract_item_size_index_var(self.lut_expr)
-
-                    # We've got a lookup table, create a function for it
-                    LUT = LutHelper.create_get_lookup_table(self.emulator, self.lut_address, item_size=factor) # TODO size noch dynamisch, wird immer 0,x genommen so
-
-                    self.luts.append(LUT)
-
-                    self.raw_calculations.append(f"[{self.lut_expr}] -> LUT(addr=0x{self.lut_address:04X})")
-                    self.current_expr = LUT(index_var)  # type: ignore
-                    #self.current_expr = sp.Symbol(f"{LUT.name}({index_var})")  # type: ignore
-
-                    print(f"Lookup table access at 0x{instr.address:04X} to address 0x{current_lut_address:04X} with index {self.current_expr}", flush=True)
-
-                    self.lut_address = None
-                    self.lut_expr = None
-                
+                    self.add_set_lookup_table()
                 else:
                     raise NotImplementedError("Expected LUT address, but accessed non-ROM area.")
             else:
                 raise NotImplementedError("Indirect load with X register but no LUT address known.")
-               
 
         else:
             self.calc_register_involed = False
+    
+    # TODO diese funktion sollte nicht jedes mal eine LUT erstellen, bei mehreren Durchläufen lädt er ja jedes Mal den Speicher neu!!
+    def add_set_lookup_table(self):
+        if self.lut_address is None or self.lut_expr is None:
+            raise RuntimeError("Expected a defined LUT address and expression before adding a LUT")
+
+        factor, index_var = self._extract_factor_and_index(self.lut_expr)
+        possible_idx_vals = self._get_possible_index_values(index_var)
+
+        # We've got a lookup table, create a function for it
+        LUT = LutHelper.create_get_lookup_table(
+            self.emulator, 
+            self.lut_address,
+            item_size=factor,
+            possible_index_values=possible_idx_vals) # TODO size noch dynamisch, wird immer 0,x genommen so
+
+        self.luts.append(LUT)
+
+        self.raw_calculations.append(f"[{self.lut_expr}] -> LUT(addr=0x{self.lut_address:04X})")
+        self.current_expr = LUT(index_var)  # type: ignore
+        #self.current_expr = sp.Symbol(f"{LUT.name}({index_var})")  # type: ignore
+
+        print(f"Lookup table creation to address 0x{self.lut_address:04X} with index {self.current_expr}", flush=True)
+
+        self.lut_address = None
+        self.lut_expr = None
+        
 
     def set_target_from_register_to_var(self, instr: Instruction, register: str):
         if self.new_calc_register == register:
@@ -251,15 +268,6 @@ class CalcInstructionParser:
             self.last_tested_expr = None
         
         return test_expr
-
-
-   # def set_branch_impact(self):
-        # If in a previous step a register used in calculation changed, mark that branches depend on calculation values
-     #   if self.calc_register_involed:
-    #        self.value_depended_branches = True
-
-        # TODO: Hier muss dann noch implementiert werden, welche funktion bis hier hin gilt? Oder für die jeweilige funktion wie bpl?
-        # also wenn (xy) > 0 ?
 
 
     
@@ -417,6 +425,32 @@ class CalcInstructionParser:
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
+    
+    def abx(self, instr: Instruction, access: MemAccess): # B+X->X
+
+        if self.new_calc_register == "D":
+            # We use the double register, but only use B here, only take the lower byte of D
+            self.raw_calculations.append(" & 0xFF")
+
+            print("TODO: only lower byte used")
+
+            # From now on, only take B
+            self.new_calc_register = "B"
+
+        if self.new_calc_register == "B":
+            # Do a check for a LUT based on abx
+            # 0x2B92 @IMPREZA96 does ABX for a LUT, but doesn't load them, they only get copied to fn_copy_to_lower_screen_buffer 
+            # TODO Prüfen, ob das immer so vernünftig ist
+            if self._check_for_rom_address(self.emulator.X):
+                self.lut_address = self.saved_registers.X
+                self.lut_expr = self.current_expr
+
+                self.add_set_lookup_table()
+            
+            self.new_calc_register = "X"
+            self.calc_register_involed = True
+
+            
     
     def anda(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "A":
@@ -707,19 +741,36 @@ class CalcInstructionParser:
     
     
         
-    def _extract_item_size_index_var(self, expr: sp.Expr) -> tuple[int, sp.Basic]:
+    def _extract_factor_and_index(self, expr: sp.Expr) -> tuple[int, sp.Basic]:
+        if isinstance(expr, sp.Mul):
+            factor = None
+            index_var = None
+            for arg in expr.args:
+                if arg.is_Number:
+                    factor = int(arg)
+                else:
+                    index_var = arg
+            if factor is not None and index_var is not None:
+                return factor, index_var
+        if isinstance(expr, sp.Mod):
+            return 1, expr
+        # Fallback für x1
         vars = list(expr.free_symbols)
-        if len(vars) != 1:
-            raise NotImplementedError("Expected exactly one free symbol in LUT index expression.")
-        index_var = vars[0]
-
-        factor = expr.coeff(index_var)
-        
-        if factor.is_Integer and expr == factor * index_var:
-            return int(factor), index_var
-        
+        if len(vars) == 1 and expr.is_Symbol:
+            return 1, expr
         raise NotImplementedError("Could not extract item size and index variable from LUT expression.")
 
+    def _get_possible_index_values(self, index_var: sp.Basic) -> list[int]:
+        # Modulo (fully bit masked values): Mod(x1, N)
+        if isinstance(index_var, sp.Mod):
+            mod_val = index_var.args[1]
+            if mod_val.is_Integer:
+                return list(range(sp.Integer(mod_val)))
+        # Symbol-Fall: x1
+        if index_var.is_Symbol:
+            return list(range(256))  # 8 Bit
+        # Sonst: Unbekannt, gib leere Liste zurück
+        return []
     
     def negate_current_expression(self):
         '''

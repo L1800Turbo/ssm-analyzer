@@ -171,7 +171,7 @@ class RomScalingDefinition:
     precision_decimals: int
     unit: Optional[str] = None
     functions: list[str] = field(default_factory=list)
-    lookup_table: Optional[dict[int, int]] = None
+    lookup_table: Optional[dict[int, int|str]] = None
 
 @dataclass
 class RomSwitchDefinition:

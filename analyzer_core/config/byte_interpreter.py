@@ -9,9 +9,15 @@ class ByteInterpreter:
         self.mapping = mapping or {}
         self.printable = printable
         self.hex_fallback = hex_fallback
+
+        # Add default values
+        self.add(0xA5, "᛫")
+        self.add(0xDF, "°")
     
     def add(self, b: int, s:str):
         self.mapping[b & 0xFF] = s
+
+    # TODO eine Classfunction von machen?
     
     def render(self, data:bytes) -> str:
         lo,hi = self.printable

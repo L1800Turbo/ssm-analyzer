@@ -3,7 +3,6 @@ from dataclasses import dataclass
 from typing import List, Optional, Union
 
 from analyzer_core.analyze.repo import PatternRepository
-from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo, RomScalingDefinition
 from analyzer_core.disasm.insn_model import Instruction
 
@@ -60,9 +59,9 @@ class RomConfig:
         self.__offsets: dict[CurrentSelectedDevice, int] = {}
         self.romid_tables: dict[CurrentSelectedDevice, RomIdTableInfo] = {}
 
-        self.byte_interpreter = ByteInterpreter()
-        self.byte_interpreter.add(0xA5, "᛫")
-        self.byte_interpreter.add(0xDF, "°")
+        #self.byte_interpreter = ByteInterpreter()
+        #self.byte_interpreter.add(0xA5, "᛫")
+        #self.byte_interpreter.add(0xDF, "°")
 
         # Ports/DDR
         # TODO nicht auf Dauer hier lassen

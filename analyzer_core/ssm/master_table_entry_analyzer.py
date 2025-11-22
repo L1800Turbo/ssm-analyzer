@@ -2,6 +2,7 @@ import logging
 import re
 from typing import Optional
 from analyzer_core.analyze.pattern_detector import PatternDetector
+from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.config.ssm_model import ActionType, CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, SsmAction
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
@@ -51,7 +52,8 @@ class MasterTableEntryAnalyzer:
             
             lbl_addr = lbl_ptr + lbl_idx * 0x10
             lbl_bytes = self.emulator.mem.read_bytes(lbl_addr, 0x10)
-            return self.rom_cfg.byte_interpreter.render(lbl_bytes)
+            byte_interpreter = ByteInterpreter()
+            return byte_interpreter.render(lbl_bytes)
         
         def item_label(upper_label:str) -> str:
             '''Extract the item label from e.g.  EX.TEMP  (F23) '''

@@ -2,15 +2,19 @@ from typing import Optional
 from pyparsing import Callable
 import sympy as sp 
 from sympy.core.relational import Relational
+from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.emu.emulator_6303 import Emulator6303
 
 
 class LookupTable(sp.Function):
     nargs = 1
-    table_data = ()
+    table_data: dict[int, int|str] = {}
     table_ptr = None
     #item_size = item_size
     name = "LUT"
+
+    # For LUTs with Text (e.g. 4EAT: 1st, 2nd, 3rd, 4th)
+    is_String = False
 
     @classmethod
     def eval(cls, *args): # type: ignore
@@ -18,7 +22,12 @@ class LookupTable(sp.Function):
         if args[0].is_Integer:
             idx = int(args[0])
             if 0 <= idx < len(cls.table_data):
-                return sp.Integer(cls._interpret_value(cls.table_data[idx]))
+                table_value = cls.table_data[idx]
+                if isinstance(table_value, int):
+                    return sp.Integer(cls._interpret_value(table_value))
+                elif isinstance(table_value, str):
+                    return table_value
+                raise NotImplementedError("Unknown table_data value")
                 #return sp.Integer(cls.table_data[idx])
             else:
                 return sp.S.NaN
@@ -31,23 +40,6 @@ class LookupTable(sp.Function):
         if v & 0x8000:
             return v - 0x10000
         return v
-    
-    # @classmethod
-    # def value(cls, idx):
-    #     return cls._interpret_value(cls.table_data[idx])
-
-    # @classmethod
-    # def valid_indices(cls, predicate):
-    #     """
-    #     Liefert alle i (0..255), für die predicate(value) True ist.
-    #     predicate: Funktion v -> bool
-    #     """
-    #     out = []
-    #     for i, raw in enumerate(cls.table_data):
-    #         v = cls._interpret_value(raw)
-    #         if predicate(v):
-    #             out.append(i)
-    #     return out
 
     def _eval_rewrite_as_piecewise(self, x, **kwargs):
         """Erzeuge eine Piecewise-Darstellung LUT(symbol)."""
@@ -56,13 +48,15 @@ class LookupTable(sp.Function):
         return sp.Piecewise(*pieces)
     
     def _eval_is_real(self):
-        return all(sp.S(val).is_real for val in self.table_data)
+        return all(isinstance(val, int) and sp.S(val).is_real for val in self.table_data)
     
     @classmethod
     def preimage(cls, value):
         """Gibt alle Indizes i zurück, für die LUT(i) == value gilt."""
         value = sp.S(value)
-        indizes = [i for i, v in enumerate(cls.table_data) if sp.S(v) == value]
+        #indizes = [i for i, v in enumerate(cls.table_data) if sp.S(v) == value]
+        indizes = [i for i, v in cls.table_data.items() if sp.S(v) == value]
+
         return sp.FiniteSet(*indizes)
 
     @classmethod
@@ -72,25 +66,34 @@ class LookupTable(sp.Function):
 class LookupTableHelper:
 
     @classmethod
-    def create_get_lookup_table(cls, emu: Emulator6303, ptr: int, item_size: int):
+    def create_get_lookup_table(cls, emu: Emulator6303, ptr: int, item_size: int, possible_index_values: list[int]):
         """Erzeugt eine SymPy-Funktion für eine bestimmte Lookup-Tabelle."""
+
+        byte_interpreter = ByteInterpreter()
+
 
         table_name = f"LUT_{ptr:04X}"
 
-        items = []
-        for i in range(256):
+        items: dict[int, int|str] = {}
+
+        for i in possible_index_values:
             if item_size == 1:
-                items.append(emu.read8(ptr + i))
+                items[i] = emu.read8(ptr + i)
             elif item_size == 2:
-                items.append(emu.read16(ptr + i * 2))
+                items[i] = emu.read16(ptr + i * 2)
+            elif item_size == 16:
+                # Usually the display lenght, get 16 bytes
+                item_bytes = emu.mem.read_bytes(ptr + i * 0x10, 0x10)
+                items[i] = byte_interpreter.render(item_bytes).strip()
             else:
                 raise ValueError("Unsupported item size for lookup table.")
         
         return type(table_name, (LookupTable,), {
-            "table_data": tuple(items),
+            "table_data": items,
             "table_ptr": ptr,
             #"item_size": item_size,
-            "name": table_name
+            "name": table_name,
+            "is_String": item_size == 16,
         })
     
     @classmethod
@@ -140,21 +143,34 @@ class LookupTableHelper:
         )
     
     @classmethod
-    def get_lookup_table_values(cls, expr: sp.Expr) -> Optional[dict[int, int]]:
+    def get_lookup_table_values(cls, expr: sp.Expr) -> Optional[dict[int, int|str]]:
 
         # TODO Prüfen, ob mehr als nur x1 drin ist?
 
         # Prüfe, ob überhaupt ein LookupTable-Child im Ausdruck vorhanden ist
-        has_lut = any(
-            isinstance(node, sp.Function) and issubclass(node.func, LookupTable)
-            for node in expr.atoms(sp.Function)
-        )
-        if not has_lut:
+        lut_indexes = None
+        for node in expr.atoms(sp.Function):
+            if isinstance(node, sp.Function) and issubclass(node.func, LookupTable):
+                lut = node.func
+
+                # If the LUT consists of string values, skip sympy evaluation
+                # TODO er nimmt dann auch nur x1 als Wert und setzt einfach i ein -> evtl. reicht das nicht für alle Fälle
+                if lut.is_String:
+                    return lut.table_data
+
+                _lut_indexes = lut.table_data.keys()
+                if lut_indexes is not None and lut_indexes != _lut_indexes:
+                    raise NotImplementedError("Range of valid lookup tables changed, behaviour not implemented.")
+                else:
+                    lut_indexes = _lut_indexes
+
+        # If there are no values for a lookup table, we don't have one
+        if lut_indexes is None:
             return None
 
         lut_values = {}
 
-        for i in range(0, 255):
+        for i in lut_indexes: #range(0, 255):
             substituted = expr.subs(sp.Symbol("x1"), sp.Integer(i))
             evaluated = sp.simplify(substituted)
             lut_values[i] = int(evaluated)
