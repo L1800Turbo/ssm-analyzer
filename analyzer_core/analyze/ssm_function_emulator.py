@@ -129,7 +129,7 @@ class SsmFunctionEmulator:
             # Let separate emulation run for each ECU
             emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
             #self.add_default_hooks(emulator)
-            emulator.set_pc(0xFFFF)
+            emulator.set_pc(self.rom_image.reset_vector())
 
             # Initialize a logger for asm instructions
             

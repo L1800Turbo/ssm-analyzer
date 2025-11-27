@@ -37,7 +37,7 @@
         { "max_skip": 13, "min_skip": [10] },
         { "mnemonic": "mul" },
         { "mnemonic": "abx" },
-        { "mnemonic": "jsr", "op_str": "FN{set_lower_screen_buffer}" },
+        { "mnemonic": "jsr", "op_str": "FN{copy_to_lower_screen_buffer}" },
         { "mnemonic": "jsr", "op_str": "FN{set_display_only_no_cursor}" },
         { "mnemonic": "jsr", "op_str": "FN{print_lower_screen}" }
       ],

@@ -19,7 +19,6 @@ from analyzer_core.analyze.repo import PatternRepository
 from analyzer_core.pipeline import AnalysisPipeline
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.disasm.insn_model import Instruction
-from analyzer_core.ssm.master_table_entry_analyzer import MasterTableEntryAnalyzer
 
 class RomService:
     def __init__(self):

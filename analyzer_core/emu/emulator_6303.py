@@ -1426,6 +1426,26 @@ class Emulator6303:
             by=self.PC,
             next_instr_addr=self.PC
         )
+    
+    @operand_needed
+    def bge(self, instr: Instruction) -> MemAccess:
+        """Branch if Greater or Equal (N == V)"""
+        old_PC = self.PC
+
+        if self.flags.N == self.flags.V:
+            self.PC = instr.target_value
+        else:
+            self.PC += instr.size
+
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=self.rom_config.get_by_address(old_PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
 
     def psha(self, instr: Instruction) -> MemAccess:
         self.push8(self.A)

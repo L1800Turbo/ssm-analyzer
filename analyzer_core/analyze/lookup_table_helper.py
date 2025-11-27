@@ -1,9 +1,46 @@
+from dataclasses import dataclass
 from typing import Optional
 from pyparsing import Callable
 import sympy as sp 
 from sympy.core.relational import Relational
 from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.emu.emulator_6303 import Emulator6303
+
+
+@dataclass
+class LookupTableAccess:
+    _lut_address: Optional[int] = None
+    lut_expr: sp.Expr = sp.Expr()
+    _lut_x_flag_modified_after_set: bool = False
+
+    def address_defined(self) -> bool:
+        return self._lut_address is not None #and self.lut_expr is not None
+    
+    def class_defined(self, lookup_tables: dict[str, Callable]) -> bool:
+        # Find the lookup table with the given address in the list
+        if self._lut_address is not None and LookupTableHelper.table_name(self._lut_address) in lookup_tables:
+            return True
+        return False
+
+    def set_lut_address(self, address:int):
+        self._lut_address = address
+        self._lut_x_flag_modified_after_set = False
+    
+    def set_x_reg_modified(self):
+        if self._lut_address is not None:
+            self._lut_x_flag_modified_after_set = True
+
+    def get_lut_ptr_modified(self) -> bool:
+        '''
+        If the X flag was changed after a LUT was loaded into X, we can assume that there were calculations with it
+        '''
+        return self._lut_x_flag_modified_after_set
+    
+    def get_lut_address(self) -> int:
+        if self._lut_address is None:
+            raise ValueError("LUT address is expected to be set.")
+        return self._lut_address
+    
 
 
 class LookupTable(sp.Function):
@@ -20,13 +57,16 @@ class LookupTable(sp.Function):
     def eval(cls, *args): # type: ignore
         # Nur auswerten, wenn x eine konkrete Zahl ist
         if args[0].is_Integer:
+            if cls.is_String:
+                return None # Don't evaluate string LUTs
+            
             idx = int(args[0])
             if 0 <= idx < len(cls.table_data):
                 table_value = cls.table_data[idx]
                 if isinstance(table_value, int):
                     return sp.Integer(cls._interpret_value(table_value))
-                elif isinstance(table_value, str):
-                    return table_value
+                #elif isinstance(table_value, str):
+                #    return table_value
                 raise NotImplementedError("Unknown table_data value")
                 #return sp.Integer(cls.table_data[idx])
             else:

@@ -8,7 +8,7 @@ import sympy as sp
 from sympy.logic.boolalg import Boolean
 from sympy.core.relational import Relational
 from pyparsing import Callable
-from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableHelper
+from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableAccess, LookupTableHelper
 from analyzer_core.config.memory_map import MemoryRegion, RegionKind, RegionKind
 from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.disasm.capstone_wrap import OperandType
@@ -65,6 +65,8 @@ class CalcInstructionParser:
             rom_cfg.address_by_name("mul16bit"): self._mul16bit,
             #rom_cfg.address_by_name("print_lower_value"): lambda instr, access: None,
 
+            rom_cfg.address_by_name("copy_to_lower_screen_buffer"): self._copy_to_lower_screen_buffer,
+
             # fn_copy_to_lower_screen_buffer: ggfs ergänzen, zum mocken, damit die Nachricht verschwindet, oder auch um die LUT zu verarbeiten. aktuell abx
         }
 
@@ -81,11 +83,18 @@ class CalcInstructionParser:
 
         self.current_expr: sp.Expr = sp.Expr()
         self.last_tested_expr: Optional[sp.Expr] = None
+        self.last_tested_value: Optional[int] = None
 
         self.conditions: list[Relational] = []
         self.multi_step_complement: TwoStepComplement = TwoStepComplement.NONE
         self.multi_step_divide: TwoStepDivide = TwoStepDivide.NONE
-        self.lut_address: int | None = None
+
+
+        # Helpers for Lookup tables
+        self.lut_access = LookupTableAccess()
+        #self.lut_address: Optional[int] = None
+        #self.lut_x_flag_modified_after_set = False # To influence if the LUT expression is x1 or a fixed value
+        #self.lut_expr: Optional[int] = None
 
         # Don't go into functions for now
         self.jsr_level = 0
@@ -162,6 +171,7 @@ class CalcInstructionParser:
 
 
     def set_target_from_var_to_register(self, instr: Instruction, register: str):
+        # If we read from the read address like ssm_rx_byte_2, we initialize the calculation
         if instr.target_value == self.read_address:
             self.new_calc_address = None
             self.new_calc_register = register
@@ -182,37 +192,44 @@ class CalcInstructionParser:
             self.new_calc_register = register
             self.calc_register_involed = True
         elif instr.target_type == OperandType.INDIRECT and self.new_calc_register == 'X':
+            assert instr.target_value is not None
+
             self.new_calc_address = None
             self.new_calc_register = register
             self.calc_register_involed = True
 
             # If we load indirect with X register (e.g. ldd 0, x), we should check if this is an address from the static ROM area.
             # In that case it's likely to be a lookup table access
-            if instr.target_value is None:
-                raise RuntimeError(f"Expected target for instruction {instr.mnemonic}")
-            
-            current_lut_address = self.saved_registers.X + instr.target_value
-            if self.lut_address is not None and self.lut_expr is not None:
-            
-                # Check if we're still accessing ROM data -> then it's a LUT access
-                if self._check_for_rom_address(current_lut_address):
+            possible_lut_address = self.saved_registers.X + instr.target_value
+            if self._check_for_rom_address(possible_lut_address):
+                if self.lut_access.address_defined():
                     self.add_set_lookup_table()
                 else:
-                    raise NotImplementedError("Expected LUT address, but accessed non-ROM area.")
-            else:
-                raise NotImplementedError("Indirect load with X register but no LUT address known.")
+                    raise NotImplementedError("LUT address with X register modified but no LUT address defined.")
+            
 
+        # Not for our variable relevant now, but possibly a LUT access
+        elif instr.target_value and self._check_for_rom_address(instr.target_value):
+            if not self.lut_access.address_defined():
+                self.lut_access.set_lut_address(instr.target_value)
+            else:
+                logger.warning(f"Expected LUT address at 0x{instr.target_value:04X} at instruction 0x{instr.address:04X}, but lut_address is already set to 0x{self.lut_access.get_lut_address():04X}")
+            
+            # But not our calc register
+            self.calc_register_involed = False
         else:
             self.calc_register_involed = False
     
     # TODO diese funktion sollte nicht jedes mal eine LUT erstellen, bei mehreren Durchläufen lädt er ja jedes Mal den Speicher neu!!
-    def add_set_lookup_table(self):
-        if self.lut_address is None or self.lut_expr is None:
+    def add_set_lookup_table(self, factor = None, index_var=None):
+        if not self.lut_access.address_defined():
             raise RuntimeError("Expected a defined LUT address and expression before adding a LUT")
     
-        factor, index_var = self._extract_factor_and_index(self.lut_expr)
+        # If we didn't set them manually, extract them from the expression
+        if factor is None or index_var is None:
+            factor, index_var = self._extract_factor_and_index(self.lut_access.lut_expr)
         
-        table_name = LookupTableHelper.table_name(self.lut_address)
+        table_name = LookupTableHelper.table_name(self.lut_access.get_lut_address())
         if table_name in self.rom_cfg.lookup_tables:
             # LUT is already created (by a previous scaling or a previous, branch dependend run)
             lut = self.rom_cfg.lookup_tables[table_name]
@@ -223,25 +240,22 @@ class CalcInstructionParser:
             # We've got a lookup table, create a function for it
             lut = LookupTableHelper.create_get_lookup_table(
                 self.emulator, 
-                self.lut_address,
+                self.lut_access.get_lut_address(),
                 item_size=factor,
                 possible_index_values=possible_idx_vals) # TODO size noch dynamisch, wird immer 0,x genommen so
         
-            print(f"Lookup table creation to address 0x{self.lut_address:04X} with index {self.current_expr}", flush=True)
-
+            print(f"Lookup table creation to address 0x{self.lut_access.get_lut_address():04X} with index {self.current_expr}", flush=True)
 
             self.rom_cfg.lookup_tables[table_name] = lut
 
             # Also save the value to the known variables
-            self.rom_cfg.add_lut(table_name, self.lut_address, factor * max(possible_idx_vals))
+            self.rom_cfg.add_lut(table_name, self.lut_access.get_lut_address(), factor * max(possible_idx_vals))
 
-        self.raw_calculations.append(f"[{self.lut_expr}] -> LUT(addr=0x{self.lut_address:04X})")
+        self.raw_calculations.append(f"[{self.lut_access.lut_expr}] -> LUT(addr=0x{self.lut_access.get_lut_address():04X})")
         self.current_expr = lut(index_var)  # type: ignore
         #self.current_expr = sp.Symbol(f"{LUT.name}({index_var})")  # type: ignore
 
-        self.lut_address = None
-        self.lut_expr = None
-        
+        self.lut_access = LookupTableAccess()
 
     def set_target_from_register_to_var(self, instr: Instruction, register: str):
         if self.new_calc_register == register:
@@ -278,6 +292,14 @@ class CalcInstructionParser:
             self.last_tested_expr = None
         
         return test_expr
+    
+    def _get_reset_test_value(self) -> Optional[int]:
+        if self.last_tested_value is None:
+            return 0
+        else:
+            val = self.last_tested_value
+            self.last_tested_value = None
+            return val
 
 
     
@@ -324,6 +346,44 @@ class CalcInstructionParser:
         else:
             self.calc_register_involed = False
 
+    def _copy_to_lower_screen_buffer(self, instr: Instruction, access: MemAccess):
+        # If we might have a LUT address
+        if self.lut_access.address_defined():
+            #if not self.lut_access.class_defined(self.rom_cfg.lookup_tables):
+            if self.lut_access.get_lut_ptr_modified():
+                self.lut_access.lut_expr = self.current_expr
+                self.add_set_lookup_table()
+            else:
+                self.add_set_lookup_table(16, sp.Integer(0))
+
+        # For safety reasons not to miss a LUT
+        elif self._check_for_rom_address(self.saved_registers.X):
+            raise NotImplementedError("Expected a defined lookup table")
+
+
+
+            # TODO: Jetzt eine Abfrage, ob was mit der LUT gemacht wurde
+            # -> ist X immer noch die LUT? nur auf gleiche Adresse reicht nicht, kann ja 0 sein und dann die gleiche Adresse sein
+            # -> in den anderen Funktionen ggfs. ein Flag setzen: Wenn LUT-Adresse exisitert, dann Flag, wenn an X gebastelt wurde?
+            # x_flag_modified_after_lut_set = False
+            #------------------- abx
+                        # TODO Prüfen, ob das immer so vernünftig ist -> ANpassen!
+            # if self._check_for_rom_address(self.emulator.X):
+            #     if self.lut_address is None:
+            #         raise NotImplementedError("Expected LUT address at ABX instruction because of Rom address range, but none defined.")
+            #     #self.lut_address = self.saved_registers.X
+            #     self.lut_expr = self.current_expr
+
+            #     self.add_set_lookup_table()
+            #--------------------------
+        
+            # Check if we're still accessing ROM data -> then it's a LUT access
+            #if self._check_for_rom_address(self.lut_access.get_lut_address()):
+            #    self.add_set_lookup_table(16, self.lut_access.lut_expr)
+            #else:
+            #    raise NotImplementedError("Expected LUT address, but accessed non-ROM area.")
+      
+
 
     # --- Instruction handlers ---
 
@@ -337,6 +397,7 @@ class CalcInstructionParser:
         self.set_target_from_var_to_register(instr, "D")
     
     def ldx(self, instr: Instruction, access: MemAccess):
+        self.lut_access.set_x_reg_modified()
         self.set_target_from_var_to_register(instr, "X")
 
     def staa(self, instr: Instruction, access: MemAccess):
@@ -349,6 +410,8 @@ class CalcInstructionParser:
         self.set_target_from_register_to_var(instr, "D")
     
     def xgdx(self, instr: Instruction, access: MemAccess):
+        self.lut_access.set_x_reg_modified()
+
         if self.new_calc_register == "D":
             self.new_calc_register = "X"
             self.calc_register_involed = True
@@ -385,7 +448,7 @@ class CalcInstructionParser:
         elif self.__is_address_match(instr.target_value, self.new_calc_address):
             # Additional check for Lookup table access
             if self._check_for_rom_address(self.saved_registers.D):
-                self.lut_address = self.saved_registers.D
+                #self.lut_address = self.saved_registers.D
                 self.lut_expr = self.current_expr
 
             self.raw_calculations.append(f" + {self.saved_registers.D}")
@@ -437,6 +500,7 @@ class CalcInstructionParser:
             self.calc_register_involed = False
     
     def abx(self, instr: Instruction, access: MemAccess): # B+X->X
+        self.lut_access.set_x_reg_modified()
 
         if self.new_calc_register == "D":
             # We use the double register, but only use B here, only take the lower byte of D
@@ -450,12 +514,14 @@ class CalcInstructionParser:
         if self.new_calc_register == "B":
             # Do a check for a LUT based on abx
             # 0x2B92 @IMPREZA96 does ABX for a LUT, but doesn't load them, they only get copied to fn_copy_to_lower_screen_buffer 
-            # TODO Prüfen, ob das immer so vernünftig ist
-            if self._check_for_rom_address(self.emulator.X):
-                self.lut_address = self.saved_registers.X
-                self.lut_expr = self.current_expr
+            # TODO Prüfen, ob das immer so vernünftig ist -> ANpassen!
+            # if self._check_for_rom_address(self.emulator.X):
+            #     if self.lut_address is None:
+            #         raise NotImplementedError("Expected LUT address at ABX instruction because of Rom address range, but none defined.")
+            #     #self.lut_address = self.saved_registers.X
+            #     self.lut_expr = self.current_expr
 
-                self.add_set_lookup_table()
+            #     self.add_set_lookup_table()
             
             self.new_calc_register = "X"
             self.calc_register_involed = True
@@ -592,7 +658,17 @@ class CalcInstructionParser:
 
     def cmpa(self, instr: Instruction, access: MemAccess):
         if self.new_calc_register == "A":
-            raise NotImplementedError("cmpa handling not implemented yet.")
+            #self.raw_calculations.append(f" ?= {instr.target_value}")
+            self.last_tested_expr = self.current_expr
+            self.last_tested_value = instr.target_value
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+    
+    def cmpb(self, instr: Instruction, access: MemAccess):
+        if self.new_calc_register == "B":
+            #self.raw_calculations.append(f" ?= {instr.target_value}")
+            raise NotImplementedError("cmpb handling not implemented yet.")
         else:
             self.calc_register_involed = False
     
@@ -619,34 +695,37 @@ class CalcInstructionParser:
     def beq(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
+            test_value = self._get_reset_test_value()
             if self.branch_condition_met(instr, access):
-                self.raw_calculations.append(" if == 0")
-                cond = sp.Eq(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if == {test_value}")
+                cond = sp.Eq(self._get_test_expression(), test_value)
             else:
-                self.raw_calculations.append(" if != 0")
-                cond = sp.Ne(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if != {test_value}")
+                cond = sp.Ne(self._get_test_expression(), test_value)
             self.conditions.append(cond)
     
     def bne(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
+            test_value = self._get_reset_test_value()
             if self.branch_condition_met(instr, access):
-                self.raw_calculations.append(" if != 0")
-                cond = sp.Ne(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if != {test_value}")
+                cond = sp.Ne(self._get_test_expression(), test_value)
             else:
-                self.raw_calculations.append(" if == 0")
-                cond = sp.Eq(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if == {test_value}")
+                cond = sp.Eq(self._get_test_expression(), test_value)
             self.conditions.append(cond)
 
     def bcc(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
+            test_value = self._get_reset_test_value()
             if self.branch_condition_met(instr, access):
-                self.raw_calculations.append(" if >= 0")
-                cond = sp.Ge(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if >= {test_value}")
+                cond = sp.Ge(self._get_test_expression(), test_value)
             else:
-                self.raw_calculations.append(" if < 0")
-                cond = sp.Lt(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if < {test_value}")
+                cond = sp.Lt(self._get_test_expression(), test_value)
             self.conditions.append(cond)
             
             #self.conditions.append(self.calculations.copy())
@@ -654,34 +733,49 @@ class CalcInstructionParser:
     def bcs(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
+            test_value = self._get_reset_test_value()
             if self.branch_condition_met(instr, access):
-                self.raw_calculations.append(" if < 0")
-                cond = sp.Lt(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if < {test_value}")
+                cond = sp.Lt(self._get_test_expression(), test_value)
             else:
-                self.raw_calculations.append(" if >= 0")
-                cond = sp.Ge(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if >= {test_value}")
+                cond = sp.Ge(self._get_test_expression(), test_value)
             self.conditions.append(cond)
 
     def bpl(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
+            test_value = self._get_reset_test_value()
             if self.branch_condition_met(instr, access):
-                self.raw_calculations.append(" if >= 0")
-                cond = sp.Ge(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if >= {test_value}")
+                cond = sp.Ge(self._get_test_expression(), test_value)
             else:
-                self.raw_calculations.append(" if < 0")
-                cond = sp.Lt(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if < {test_value}")
+                cond = sp.Lt(self._get_test_expression(), test_value)
             self.conditions.append(cond)
 
     def bmi(self, instr: Instruction, access: MemAccess):
         if self.calc_register_involed:
             self.value_depended_branches = True
+            test_value = self._get_reset_test_value()
             if self.branch_condition_met(instr, access):
-                self.raw_calculations.append(" if < 0")
-                cond = sp.Lt(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if < {test_value}")
+                cond = sp.Lt(self._get_test_expression(), test_value)
             else:
-                self.raw_calculations.append(" if >= 0")
-                cond = sp.Ge(self._get_test_expression(), 0)
+                self.raw_calculations.append(f" if >= {test_value}")
+                cond = sp.Ge(self._get_test_expression(), test_value)
+            self.conditions.append(cond)
+
+    def bge(self, instr: Instruction, access: MemAccess):
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+            test_value = self._get_reset_test_value()
+            if self.branch_condition_met(instr, access):
+                self.raw_calculations.append(f" if >= {test_value}")
+                cond = sp.Ge(self._get_test_expression(), test_value)
+            else:
+                self.raw_calculations.append(f" if < {test_value}")
+                cond = sp.Lt(self._get_test_expression(), test_value)
             self.conditions.append(cond)
 
     def bra(self, instr: Instruction, access: MemAccess):
@@ -714,7 +808,7 @@ class CalcInstructionParser:
             if cond == False:
                 raise NotImplementedError("Condition is always false, no solution possible. TODO")
             # Versuche, die Gleichung nach self.symbol zu lösen
-            eq = sp.Eq(cond.lhs, 0)
+            eq = sp.Eq(cond.lhs, cond.rhs) # TODO War 0
             # Sonderfall: Enthält die Gleichung eine LookupTable-Funktion?
             lut_funcs = [f for f in cond.lhs.atoms(sp.Function) if isinstance(f, LookupTable)]
             if lut_funcs:
@@ -777,10 +871,15 @@ class CalcInstructionParser:
             if mod_val.is_Integer:
                 return list(range(sp.Integer(mod_val)))
         # Symbol case: x1
-        if index_var.is_Symbol:
+        elif index_var.is_Symbol:
             return list(range(256))  # 8 Bit
-        # Otherwise unknown, return empty list
-        return []
+        
+        elif index_var.is_Integer:
+            assert isinstance(index_var, sp.Integer)
+            return [int(index_var)]
+        
+        # Otherwise unknown
+        raise NotImplementedError(f"Couldn't create index values out of {index_var}")
     
     def negate_current_expression(self):
         '''

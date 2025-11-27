@@ -162,10 +162,6 @@ class SsmActionScalingFunction(SsmActionHelper):
         # Decompilation and detection happens on the first switch, so we hook this only after we know the function address
         if self.rom_cfg.check_for_address("print_switch_screen"):
             self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("print_switch_screen"), hook_post_print_switch_screen)
-
-        
-        # TODO Noch mocken?
-        # fn_fn_copy_to_lower_screen_buffer_unit -> wird ja eigentrlich schon manuell gemacht
     
     def _emulate_receive_ssm_response(self):
         # Emulate that a response has been received
