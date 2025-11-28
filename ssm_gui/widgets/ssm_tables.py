@@ -9,9 +9,10 @@ from PyQt6.QtWidgets import (
     QTabWidget, QTreeView, QSizePolicy
 )
 
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo, MasterTableInfo
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo, MasterTableInfo, SsmAction
 from typing import cast
 from analyzer_core.service import RomService
+from ssm_gui.models.action_table_model import ActionTableModel
 from ssm_gui.models.master_table_model import MasterTableModel
 from ssm_gui.models.romid_table_model import RomIdTableModel
 
@@ -70,9 +71,21 @@ class SsmTablesWidget(QWidget):
         self.master_table_view.setModel(self.master_table_model)
         splitter.addWidget(self.master_table_view)
 
+        self.action_view = QTableView()
+        self.action_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.action_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.action_model = ActionTableModel()
+        self.action_view.setModel(self.action_model)
+        splitter.addWidget(self.action_view)
+
+
+
         romid_table_selection_model = self.romid_table_view.selectionModel()
         if romid_table_selection_model: 
             romid_table_selection_model.selectionChanged.connect(self._on_romid_table_changed)
+        master_table_selection_model = self.master_table_view.selectionModel()
+        if master_table_selection_model:
+            master_table_selection_model.selectionChanged.connect(self._on_master_table_changed)
 
     def reshesh_select_ecu(self):
         # TODO workaround, erstmal eine ROM, später erhänzen
@@ -80,6 +93,14 @@ class SsmTablesWidget(QWidget):
 
     def _on_device_changed(self, index: int):
         """Device changed, load corresponding RomID table."""
+        #self._on_romid_table_changed(-1)
+        #self.romid_table = None
+        self.selected_romid_entry = None
+        self.refresh_master_table()
+
+        self.selected_master_table_entry = None
+        self.refresh_action_table()
+
         self.refresh_romid_table()
 
     def _on_romid_table_changed(self, index:int):
@@ -111,8 +132,44 @@ class SsmTablesWidget(QWidget):
             self.refresh_master_table()
             return
 
+        self.selected_master_table_entry = None
+        self.refresh_action_table()
+
         self.selected_romid_entry = self.romid_table.entries[row]
         self.refresh_master_table()
+
+        
+
+    def _on_master_table_changed(self, index:int):
+        '''
+        Master table changed, load the matching action
+        '''
+        sel_model = self.master_table_view.selectionModel()
+        if sel_model is None:
+            self.selected_master_table_entry = None
+            self.refresh_action_table()
+            return
+        
+        rows = sel_model.selectedRows()
+        if not rows:
+            self.selected_master_table_entry = None
+            self.refresh_action_table()
+            return
+        
+        row = rows[0].row()
+        # guard: ensure we have a master_table and entries
+        if not hasattr(self.master_table_model, "master_table") or self.master_table_model.master_table is None:
+            self.selected_master_table_entry = None
+            self.refresh_action_table()
+            return
+
+        if row < 0 or row >= len(self.master_table_model.master_table.entries):
+            self.selected_master_table_entry = None
+            self.refresh_action_table()
+            return
+
+        self.selected_master_table_entry = self.master_table_model.master_table.entries[row]
+        self.refresh_action_table()
 
     
     def refresh_romid_table(self):
@@ -145,3 +202,19 @@ class SsmTablesWidget(QWidget):
 
         # master is expected to be a MasterTableInfo instance
         self.master_table_model.setMasterTable(master)
+        self.master_table_view.resizeColumnsToContents()
+    
+    def refresh_action_table(self):
+        entry = getattr(self, "selected_master_table_entry", None)
+        if entry is None:
+            self.action_model.setAction(cast(SsmAction, None))
+            return
+
+        action = getattr(entry, "action", None)
+        if action is None:
+            self.action_model.setAction(cast(SsmAction, None))
+            return
+
+        # action is expected to be a SsmAction instance
+        self.action_model.setAction(action)
+        self.action_view.resizeColumnsToContents()

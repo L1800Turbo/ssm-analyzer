@@ -9,9 +9,7 @@ class MasterTableModel(QAbstractTableModel):
     """Qt TableModel to visualize MasterTableInfo.entries"""
 
     HEADERS = [
-        "MenuItem", "UpperLabel", "AddressIdx",
-        "UpperLblIdx", "LowerLblIdx", "AdjustLblIdx",
-        "0xB", "0xC", "0xD"
+        "MenuItem", "UpperLabel", "AddressIdx"
     ]
 
     def __init__(self, master_table: MasterTableInfo | None = None, parent=None):
@@ -45,13 +43,6 @@ class MasterTableModel(QAbstractTableModel):
             0: entry.menu_item_str(),
             1: entry.upper_label,
             2: f"0x{entry.action_address_rel:04X}",
-            3: str(entry.address_index),
-            4: str(entry.upper_label_index),
-            5: str(entry.lower_label_index),
-            6: str(entry.adjustments_label_index),
-            7:  str(entry.master_table_0xB),
-            8:  str(entry.master_table_0xC),
-            9:  str(entry.master_table_0xD)
         }
 
         return mapping.get(col, "")
