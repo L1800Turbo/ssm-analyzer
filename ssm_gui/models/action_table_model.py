@@ -1,8 +1,8 @@
 from typing import Any
 from PyQt6.QtCore import QObject, Qt, QAbstractTableModel, QModelIndex
+#from PyQt6.QtWidgets import QStyledItemDelegate, QTableView
 
 from analyzer_core.config.ssm_model import SsmAction
-
 
 
 class ActionTableModel(QAbstractTableModel):
@@ -30,6 +30,10 @@ class ActionTableModel(QAbstractTableModel):
             if scaling.unit is not None:
                 rows.append(("Unit", scaling.unit))
             rows.append(("Precision Decimals", scaling.precision_decimals))
+            if scaling.lookup_tables is not None:
+                rows.append(("Lookup table", ""))
+                for key, val in scaling.lookup_tables.items():
+                    rows.append((f"  Index {key}", str(val)))
 
 
         return rows

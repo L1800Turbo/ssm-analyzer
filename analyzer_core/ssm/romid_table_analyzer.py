@@ -104,7 +104,7 @@ class RomIdTableAnalyzer:
             entry_analyzer.run_attach_cu_specific_addresses()
 
             # TODO Für Debuggen und schneller suchen
-            if entry.print_romid_str() != "74 BD 00": 
+            if entry.print_romid_str() != "74 BD 00" and entry.print_romid_str() != "71 93 00":  # 76 5D B0  71 93 00
                return
 
 

@@ -2,6 +2,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Union
 
+#from analyzer_core.analyze.lookup_table_helper import LookupTable
 from analyzer_core.analyze.repo import PatternRepository
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo, RomScalingDefinition
 from analyzer_core.disasm.insn_model import Instruction
@@ -50,7 +51,8 @@ class RomConfig:
         self.call_tree: dict = {}
         self.action_addresses: set[int] = set()
         self.scaling_addresses: dict[int, RomScalingDefinition] = {}
-        self.lookup_tables: dict[str, Callable] = {}
+        self.lookup_tables: dict[str, type["LookupTable"]] = {} #TODO Sollte deis sein?
+        #self.lookup_tables: dict[str, Callable] = {}
 
         # Pattern for detection
         self.pattern_repo: PatternRepository

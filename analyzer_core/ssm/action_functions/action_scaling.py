@@ -95,11 +95,12 @@ class SsmActionScalingFunction(SsmActionHelper):
 
         def hook_pre_scaling_function(em: Emulator6303):
             #logger.debug(f"hook_pre_scaling_function at {self.scaling_fn_ptr:04X}")
-            self.emulator.hooks.add_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
+            # TEST 28.11. self.emulator.hooks.add_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
+            self.emulator.add_logger("scaling_fn_ssm_rx_logger", self._trace_rx_value_calculation)
         
         def hook_post_scaling_function(em: Emulator6303, access):
             #print(f"hook_post_scaling_function at {self.scaling_fn_ptr:04X}", flush=True)
-            self.emulator.hooks.remove_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
+            # TEST 28.11. self.emulator.hooks.remove_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
             self.emulator.remove_logger("scaling_fn_ssm_rx_logger")
 
         self.emulator.hooks.add_pre_hook(self.scaling_fn_ptr, hook_pre_scaling_function)
@@ -186,6 +187,7 @@ class SsmActionScalingFunction(SsmActionHelper):
         
         ssm_inputs: List[int] = [0]   # initial TX values to test
         seen_samples: set[int] = set()
+        possible_index_values: list[int] = []
 
         eq_pieces: list[tuple[sp.Expr | None, Boolean]] = []
 
@@ -223,27 +225,38 @@ class SsmActionScalingFunction(SsmActionHelper):
                     ssm_inputs.append(value)
                     #print(f"    Adding new test input value: {value}", flush=True)
 
+            
+
             # Get current expression and conditions from the instruction parser and substitude to make simplification by sympy easier
             subst_expression = LutHelper.substitute_lookup_tables(self.instr_parser.current_expr)
             subst_conditions = [LutHelper.substitute_lookup_tables(cond) for cond in self.instr_parser.conditions]
 
             eq_pieces.append((subst_expression, sp.And(*subst_conditions)))
 
+            #possible_index_values.extend(self.instr_parser.get_index_values())
+
+            
+
+        # TODO Das dauert ewig bei vielen Bedingungen -> Text-Luts AC
         final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
 
         print(f"Final Scaling Expression: {final_expr}", flush=True)
 
         self.final_expr = final_expr
 
+        #possible_index_values = list(set(possible_index_values))
+        
+
 
         # Check if we are in Switches mode where we don't need a static scaling but the switch values
         # Switches are already handled in the mocks above
         if not self.use_switches_mode:
             self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = RomScalingDefinition(
-                scaling=sp.simplify(final_expr, force=True),
+                #scaling=sp.simplify(final_expr, force=True),
+                scaling=str(final_expr),
                 precision_decimals=decimal_places,
                 unit=self.unit,
-                lookup_table=LutHelper.get_lookup_table_values(final_expr),
+                lookup_tables=LutHelper.get_lookup_table_values(final_expr, self.instr_parser.symbol) if self.instr_parser.found_luts > 0 else None,
                 functions=[self.mt_entry.item_label] if self.mt_entry.item_label else []
             )
 

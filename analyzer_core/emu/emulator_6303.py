@@ -328,7 +328,7 @@ class Emulator6303:
             if instr.address == 0x31C2 or instr.address == 0x2C36:
                 pass
 
-            if instr.address == 0x33F2:
+            if instr.address == 0x2B75: # DIO1 bei 0x2C36 für 4AT könnte auch noch komisch werden -> romid3 abhängig
                 pass
 
             # TODO hier die steps auswerten?
@@ -390,8 +390,8 @@ class Emulator6303:
             if self.PC == sentinel:
                 break
 
-            #if self.PC == 0xA9AB:
-            #    pass
+            if self.PC == 0x2AA6:
+                pass
 
             last_step = self.step()
             steps += 1

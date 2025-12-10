@@ -67,3 +67,8 @@ class SsmEmuHelper:
         Set the response received flag to simulate a successful SSM communication.
         """
         emulator.mem.write(rom_cfg.address_by_name("response_received_flag"), 0x01)
+
+
+    # TODO Weitere Standard-Hooks:
+    # BEE3: clear_lower_ssm_screen
+    # ... generell noch was von 903C ausgeht
