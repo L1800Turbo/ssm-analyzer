@@ -51,8 +51,7 @@ class RomConfig:
         self.call_tree: dict = {}
         self.action_addresses: set[int] = set()
         self.scaling_addresses: dict[int, RomScalingDefinition] = {}
-        self.lookup_tables: dict[str, type["LookupTable"]] = {} #TODO Sollte deis sein?
-        #self.lookup_tables: dict[str, Callable] = {}
+        self.lookup_tables: dict[str, type["LookupTable"]] = {} # type: ignore
 
         # Pattern for detection
         self.pattern_repo: PatternRepository
@@ -62,10 +61,6 @@ class RomConfig:
 
         self.__offsets: dict[CurrentSelectedDevice, int] = {}
         self.romid_tables: dict[CurrentSelectedDevice, RomIdTableInfo] = {}
-
-        #self.byte_interpreter = ByteInterpreter()
-        #self.byte_interpreter.add(0xA5, "᛫")
-        #self.byte_interpreter.add(0xDF, "°")
 
         # Ports/DDR
         # TODO nicht auf Dauer hier lassen

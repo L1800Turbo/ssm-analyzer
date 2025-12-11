@@ -40,7 +40,7 @@ class SsmActionScalingFunction(SsmActionHelper):
 
         self.unit: Optional[str] = None
 
-        logger.debug(f"Running Scaling Function for MT Entry {mt_entry.menu_item_str()} with scaling index {mt_entry.scaling_index}")
+        logger.debug(f"Running Scaling Function for MT Entry {mt_entry.item_label} {mt_entry.menu_item_str()} with scaling index {mt_entry.scaling_index}")
 
         self._ensure_scaling_disassembly()
         self._set_unit()
@@ -161,6 +161,8 @@ class SsmActionScalingFunction(SsmActionHelper):
         # Add a hook to the function 'print_switch_screen' which is responsible to printing the switch values on a DIO
         # Use this to enable Switches mode -> alternative: Check by name DIOx FAx
         # Decompilation and detection happens on the first switch, so we hook this only after we know the function address
+        # TODO Funktioniert nur für EGi, bei den anderen reicht das nicht aus. Diese nutzen nciht diese Funktion print_switch_screen_from_addressIndex_pointer,
+        # die erst auf romid3 geht, sondern direkt print_upper_screen -> Also doch FAyxx
         if self.rom_cfg.check_for_name("print_switch_screen"):
             self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("print_switch_screen"), hook_post_print_switch_screen)
     
@@ -228,22 +230,13 @@ class SsmActionScalingFunction(SsmActionHelper):
                 decimal_places = max(decimal_places, current_decimal_places)
 
 
-            # TODO Decimal places müssen ja auch in die Scaling-Definition später rein, also für jede Variante und prüfen?
-            # Als condition? in einen Datentyp`?`
-            
             if self.emulator.mem.read(self.rom_cfg.address_by_name('print_-_sign')) == 1:
                 self.instr_parser.negate_current_expression()
             
-
-            #print(f"{rx_test_value}  Expr: {self.instr_parser.current_expr}  guard: {sp.And(*self.instr_parser.conditions)}", flush=True)
-
             # Get jump conditions from guards to find new test inputs
             for value in self.instr_parser.solve_jump_conditions():
                 if value not in seen_samples and value not in ssm_inputs:
                     ssm_inputs.append(value)
-                    #print(f"    Adding new test input value: {value}", flush=True)
-
-            
 
             # Get current expression and conditions from the instruction parser and substitude to make simplification by sympy easier
             subst_expression = LutHelper.substitute_lookup_tables(self.instr_parser.current_expr)
@@ -258,12 +251,9 @@ class SsmActionScalingFunction(SsmActionHelper):
         # TODO Das dauert ewig bei vielen Bedingungen -> Text-Luts AC
         final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
 
-        print(f"Final Scaling Expression: {final_expr}", flush=True)
+        #print(f"Final Scaling Expression: {final_expr}", flush=True)
 
-        self.final_expr = final_expr
-
-        #possible_index_values = list(set(possible_index_values))
-        
+        #self.final_expr = final_expr
 
 
         # Check if we are in Switches mode where we don't need a static scaling but the switch values
@@ -272,6 +262,7 @@ class SsmActionScalingFunction(SsmActionHelper):
             self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = RomScalingDefinition(
                 #scaling=sp.simplify(final_expr, force=True),
                 scaling=str(final_expr),
+                scaling_address_pointer = self.scaling_fn_ptr,
                 precision_decimals=decimal_places,
                 unit=self.unit,
                 lookup_tables=LutHelper.get_lookup_table_values(final_expr, self.instr_parser.symbol) if self.instr_parser.found_luts > 0 else None,

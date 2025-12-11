@@ -473,6 +473,21 @@
         { "mnemonic": "psha" }
       ],
       "description": "IMPREZA96 @0xB501: Set SSM lights based on hex value, usually used for switches"
+    },
+    {
+      "name": "copy_to_lower_screen_buffer_unit",
+      "pattern": [
+        { "mnemonic": "ldx", "op_str": "REF{menuitems_lower_label_pointer}" },
+        { "mnemonic": "ldaa", "op_str": "VAR{current_lower_label_index}" },
+        { "mnemonic": "ldab", "op_str": "0x10" },
+        { "mnemonic": "mul" },
+        { "mnemonic": "std", "op_str": "REF{print_hex_buffer_0}" },
+        { "mnemonic": "xgdx" },
+        { "mnemonic": "addd", "op_str": "REF{print_hex_buffer_0}" },
+        { "mnemonic": "xgdx" },
+        { "mnemonic": "jsr", "op_str": "FN{copy_to_lower_screen_buffer}" }
+      ],
+      "description": "IMPREZA96 @0xC15B: Copy to lower screen buffer unit"
     }
   ],
   "strings": {

@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 from pyparsing import Callable
 import sympy as sp 
 from sympy.core.relational import Relational
@@ -44,6 +44,10 @@ class LookupTableAccess:
 
 
 class LookupTable(sp.Function):
+    '''
+    Base class for Lookup Tables in SymPy.
+    Subclasses should define `table_data` as a dictionary mapping indices to values.
+    '''
     nargs = 1
     table_ptr: Optional[int] = None
     item_size = 1
@@ -56,10 +60,9 @@ class LookupTable(sp.Function):
 
     @classmethod
     def eval(cls, *args): # type: ignore
-        # Nur auswerten, wenn x eine konkrete Zahl ist
+        # Only evaluate as sympy expression if the argument is an integer, others throw errors
         if args[0].is_Integer:
             if cls.is_String:
-                #return cls.table_data.get(int(args[0]), "")  
                 return None # Don't evaluate string LUTs
             
             idx = int(args[0])
@@ -67,26 +70,24 @@ class LookupTable(sp.Function):
                 table_value = cls.table_data[idx]
                 if isinstance(table_value, int):
                     return sp.Integer(cls._interpret_value(table_value))
-                #elif isinstance(table_value, str):
-                #    return table_value
+
                 raise NotImplementedError("Unknown table_data value")
-                #return sp.Integer(cls.table_data[idx])
             else:
                 return sp.S.NaN
-        return None  # sonst symbolisch lassen
+        return None  # otherwise keep as is for symbolic evaluation
     
     @staticmethod
     def _interpret_value(v):
-        """LUT-Werte (16 Bit) als signed interpretieren."""
+        """Interpret LUT values (16-bit) as signed."""
         v = int(v) & 0xFFFF
         if v & 0x8000:
             return v - 0x10000
         return v
 
     def _eval_rewrite_as_piecewise(self, x, **kwargs):
-        """Erzeuge eine Piecewise-Darstellung LUT(symbol)."""
+        """Generate a Piecewise representation LUT(symbol)."""
         pieces = [(sp.S(val), sp.Eq(x, iter)) for iter, val in enumerate(self.table_data)]
-        pieces.append((sp.S.NaN, sp.S.true))  # Default-Fall
+        pieces.append((sp.S.NaN, sp.S.true))  # Default case
         return sp.Piecewise(*pieces)
     
     def _eval_is_real(self):
@@ -94,7 +95,7 @@ class LookupTable(sp.Function):
     
     @classmethod
     def preimage(cls, value):
-        """Gibt alle Indizes i zurück, für die LUT(i) == value gilt."""
+        """Returns all indices i for which LUT(i) == value."""
         value = sp.S(value)
         #indizes = [i for i, v in enumerate(cls.table_data) if sp.S(v) == value]
         indizes = [i for i, v in cls.table_data.items() if sp.S(v) == value]
@@ -105,6 +106,7 @@ class LookupTable(sp.Function):
     def __repr__(cls):
         return f"<LookupTable {cls.name} at 0x{cls.table_ptr:04X}>"
 
+
 class LookupTableHelper:
 
     @staticmethod
@@ -113,10 +115,7 @@ class LookupTableHelper:
 
     @classmethod
     def create_get_lookup_table(cls, emu: Emulator6303, ptr: int, item_size: int, possible_index_values: list[int]):
-        """Erzeugt eine SymPy-Funktion für eine bestimmte Lookup-Tabelle."""
-
-        byte_interpreter = ByteInterpreter()
-
+        """Creates a SymPy function for a specific lookup table."""
 
         table_name = LookupTableHelper.table_name(ptr)
 
@@ -131,38 +130,17 @@ class LookupTableHelper:
         cls.add_index_values(lut_class, possible_index_values, emu)
 
         return lut_class
-
-        items: dict[int, int|str] = {}
-
-        for i in possible_index_values:
-            if item_size == 1:
-                items[i] = emu.read8(ptr + i)
-            elif item_size == 2:
-                items[i] = emu.read16(ptr + i * 2)
-            elif item_size == 16:
-                # Usually the display lenght, get 16 bytes
-                item_bytes = emu.mem.read_bytes(ptr + i * 0x10, 0x10)
-                items[i] = byte_interpreter.render(item_bytes).strip()
-            else:
-                raise ValueError("Unsupported item size for lookup table.")
-        
-        return type(table_name, (LookupTable,), {
-            "table_data": items,
-            "table_ptr": ptr,
-            #"item_size": item_size,
-            "name": table_name,
-            "item_size": item_size,
-            "is_String": item_size == 16,
-        })
     
     @staticmethod
     def add_index_values(lut_class: type[LookupTable], new_indexes: list[int], emu: Emulator6303):
-        """Fügt einer bestehenden Lookup-Tabelle neue Indexwerte hinzu."""
+        """Adds new index values to an existing lookup table."""
         if lut_class.table_ptr is None:
             raise ValueError("LookupTable must have a defined table_ptr to add index values.")
         
         if not lut_class.table_data:
             lut_class.table_data = {}
+
+        byte_interpreter = ByteInterpreter()
 
         for i in new_indexes:
             if i not in lut_class.table_data:
@@ -172,13 +150,12 @@ class LookupTableHelper:
                     lut_class.table_data[i] = emu.read16(lut_class.table_ptr + i * 2)
                 elif lut_class.item_size == 16:
                     item_bytes = emu.mem.read_bytes(lut_class.table_ptr + i * 0x10, 0x10)
-                    byte_interpreter = ByteInterpreter()
                     lut_class.table_data[i] = byte_interpreter.render(item_bytes).strip()
                 else:
                     raise ValueError("Unsupported item size for lookup table.")
     
-    @classmethod
-    def substitute_lookup_tables(cls, expr: sp.Expr | Relational) -> sp.Expr:
+    @staticmethod
+    def substitute_lookup_tables(expr: sp.Expr | Relational): # -> tuple[sp.Expr | None, dict[Any, Any]]
         """
         Ersetzt alle LookupTable-Funktionen im Ausdruck durch ein Symbol mit dem Namen LUT_xxxx(nn).
         """
@@ -194,8 +171,8 @@ class LookupTableHelper:
             lut_to_symbol
         )
     
-    @classmethod
-    def reverse_substitute_lookup_tables(cls, luts: dict[str, Callable], expr: sp.Expr) -> sp.Expr:
+    @staticmethod
+    def reverse_substitute_lookup_tables(luts: dict[str, Callable], expr: sp.Expr) -> tuple[Any, dict[Any, Any]]:
         """
         Ersetzt alle Symbole wie LUT_xxxx(nn) wieder durch die entsprechende LookupTable-Funktion.
         """
@@ -210,14 +187,6 @@ class LookupTableHelper:
                 # Finde die LookupTable-Klasse mit passendem Namen
 
                 return luts[lut_name](arg)
-                for lut_cls in luts:
-                    if getattr(lut_cls, "name", None) == lut_name:
-                        # Argument als Symbol oder Zahl
-                        #try:
-                        arg = sp.sympify(arg_str)
-                        #except Exception:
-                        #    arg = sp.Symbol(arg_str)
-                        return lut_cls(arg)
             return sym
 
         # Ersetze rekursiv alle passenden Symbole
@@ -233,13 +202,13 @@ class LookupTableHelper:
         # TODO Prüfen, ob mehr als nur x1 drin ist?
         # TODO bei mehreren LUTs muss man das hier auc mehrmals durchgehen oder so und dann auch die letztliche Berechnung machen, auch bei string LUTs
 
-        def eval_expression(expr: sp.Expr):
+        def eval_expression(expr: sp.Expr) -> int|str:
             if isinstance(expr, sp.Function) and issubclass(expr.func, LookupTable):
                 lut_func = expr.func
-                lut_index = int(expr.args[0])
+                lut_index = sp.Integer(expr.args[0])
 
                 if lut_func.is_String:
-                    value = lut_func.table_data[lut_index]
+                    value = lut_func.table_data[int(lut_index)]
                     return value
                 else:
                     value_proto = lut_func.eval()
@@ -248,27 +217,26 @@ class LookupTableHelper:
                     else:
                         raise NotImplementedError("LUT value evaluation did not return an integer.")
             else:
-                return expr
-                #raise NotImplementedError("LUT value extraction for non-LUT expressions not implemented yet")
+                return str(expr)
 
-        # Store values for all possible values TODO -> Index should be able to contain params like True, <>, ...
+        # Store values for all possible values
         lut_values: dict[int|str, int|str] = {}
-        #possible_index_values: list[int] = []
 
         # Vorher noch wegen LUT prüfen? oder wird das dann gar nicht aufgerufen??
 
         if isinstance(expr, sp.Piecewise):
-            arms = expr.args
+            arms:tuple[tuple[sp.Expr, sp.Basic]] = expr.args # type: ignore
         else:
-            arms = [(expr, sp.Basic(True))]
+            arms = ((expr, sp.Basic(True)),)
 
         for curr_expr, cond in arms:
             if isinstance(cond, sp.Equality):
                 # Try to solve to get a possible index value
                 sol = sp.solve(cond, symbol)
                 for s in sol:
+                    # Evaluate expression for each solution
                     if s.is_Integer:
-                        expr_eval = expr.subs({symbol: s})
+                        expr_eval: sp.Expr = expr.subs({symbol: s}) # type: ignore
                         lut_values[s] = eval_expression(expr_eval)
                         #possible_index_values.append(int(s))
                     else:
@@ -277,126 +245,7 @@ class LookupTableHelper:
                 lut_values['default'] = eval_expression(curr_expr)
             elif isinstance(cond, (sp.Gt, sp.Lt, sp.Ge, sp.Le)):
                 lut_values[str(cond)] = eval_expression(curr_expr)
-                pass
-                #possible_index_values = cond # TODO dann aber auch unten prüfen, ob es ein Integer ist, sonst kann er das ja gar nicht auswerten
             else:
-                raise NotImplementedError("Current condition for LUT index not implemented.")
-            
-            
-        # TODO das hier nicht hir unten sondenr direkt oben einbauen als subdef?
-        # for x1_val in possible_index_values:
-        #     expr_eval = expr.subs({symbol: x1_val})
-
-        #     if isinstance(expr_eval, sp.Function) and issubclass(expr_eval.func, LookupTable):
-        #         print(f"Extracting LUT value for {expr_eval} with {symbol}={x1_val}")
-
-        #         lut_func = expr_eval.func
-        #         lut_index = int(expr_eval.args[0])
-
-        #         if lut_func.is_String:
-        #             value = lut_func.table_data[lut_index]
-        #             #lut_values[lut_index] = value
-        #         else:
-        #             value_proto = lut_func.eval()
-        #             if isinstance(value_proto, sp.Integer):
-        #                value = int(value_proto)
-        #             else:
-        #                 raise NotImplementedError("LUT value evaluation did not return an integer.")
-                
-        #         lut_values[x1_val] = value
-            
-        #     else:
-        #         raise NotImplementedError("LUT value extraction for non-LUT expressions not implemented yet")
-
-                # if cond_eval == True:
-                #     lut_func = lut_expr.func
-                #     lut_index = int(lut_expr.args[0])
-
-                #     if lut_func.is_String:
-                #         value = lut_func.table_data[lut_index]
-                #     else:
-                #         value = lut_func(lut_index).doit()
-                    
-                #     lut_values[x1_val] = value
-                # else:
-                #     pass
-                        #raise NotImplementedError("Condition evaluation for LUT value extraction not implemented.")
-                    
+                raise NotImplementedError("Current condition for LUT index not implemented.")                    
 
         return lut_values if len(lut_values) > 0 else None
-
-        # TODO gerade müll der nicht funktioniert.
-        # Was getan werden sollte: possible_indexes für gesamte Expression aus allen LUTs sammeln
-        # Dann für jeden Indexwert die gesamte Expression auswerten
-        # Dann für jede LUT die Werte extrahieren
-
-
-        # Prüfe, ob überhaupt ein LookupTable-Child im Ausdruck vorhanden ist
-        #lut_indexes = None
-
-        value_luts: dict[str, dict[int, int|str]] = {}
-
-        # Falls Piecewise, iteriere über die Arme
-        if isinstance(expr, sp.Piecewise):
-            arms = expr.args
-        else:
-            arms = [(expr, True)]
-
-        for arm in arms:
-            arm_expr, cond_expr = arm
-            for node in arm_expr.atoms(sp.Function):
-                if isinstance(node, sp.Function) and issubclass(node.func, LookupTable):
-                    lut_func = node.func
-
-                    if lut_func.name in value_luts:
-                        continue  # Already processed
-
-                    #if lut.is_String:
-                    #        value_luts[lut.name] = lut.table_data
-                    #else:
-                    for i in lut_func.table_data.keys():
-                        cond_eval = expr.subs({sp.Symbol("x1"): sp.Integer(i)})
-                        
-                        if cond_eval == True:
-                            if lut_func.is_String:
-                                # String-LUT: Wert direkt übernehmen
-                                if lut_func.name not in value_luts:
-                                    value_luts[lut_func.name] = {}
-                                value_luts[lut_func.name][i] = lut_func.table_data[i]
-                            else:
-                                value = lut_func(i).doit() 
-                                value_luts.setdefault(lut_func.name, {})[i] = int(value)
-                                #substituted = expr.subs(sp.Symbol("x1"), sp.Integer(i))
-                                #evaluated = sp.simplify(substituted)
-                                # TODO eigentlich so, damit er die LUT auch vereinfachen kann..
-                                #
-                                # value_luts[lut.name][i] = int(evaluated)
-                            
-                            break
-
-                    # If the LUT consists of string values, skip sympy evaluation
-                    # TODO er nimmt dann auch nur x1 als Wert und setzt einfach i ein -> evtl. reicht das nicht für alle Fälle
-            #         if lut.is_String:
-            #             return lut.table_data
-
-            #         _lut_indexes = lut.table_data.keys()
-            #         if lut_indexes is not None and lut_indexes != _lut_indexes:
-            #             raise NotImplementedError("Range of valid lookup tables changed, behaviour not implemented.")
-            #         else:
-            #             lut_indexes = _lut_indexes
-
-            # # If there are no values for a lookup table, we don't have one
-            # if lut_indexes is None:
-            #     return None
-
-            # lut_values = {}
-
-            # for i in lut_indexes: #range(0, 255):
-            #     if lut.is_String:
-            #         lut_values[i] = lut.table_data[i]
-            #     else:
-            #         substituted = expr.subs(sp.Symbol("x1"), sp.Integer(i))
-            #         evaluated = sp.simplify(substituted)
-            #         lut_values[i] = int(evaluated)
-        
-        return value_luts if len(value_luts) > 0 else None

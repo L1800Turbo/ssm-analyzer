@@ -66,6 +66,7 @@ class CalcInstructionParser:
             #rom_cfg.address_by_name("print_lower_value"): lambda instr, access: None,
 
             rom_cfg.address_by_name("copy_to_lower_screen_buffer"): self._copy_to_lower_screen_buffer,
+            rom_cfg.address_by_name("copy_to_lower_screen_buffer_unit"): lambda instr, access: None,
 
             # fn_copy_to_lower_screen_buffer: ggfs ergänzen, zum mocken, damit die Nachricht verschwindet, oder auch um die LUT zu verarbeiten. aktuell abx
         }
@@ -98,11 +99,6 @@ class CalcInstructionParser:
 
         # Useful for Lookup tables
         self.possible_index_values: list[int] = []
-        
-        
-        #self.lut_address: Optional[int] = None
-        #self.lut_x_flag_modified_after_set = False # To influence if the LUT expression is x1 or a fixed value
-        #self.lut_expr: Optional[int] = None
 
         # Don't go into functions for now
         self.jsr_level = 0
@@ -170,12 +166,6 @@ class CalcInstructionParser:
            self.calc_register_involed:
             raise ParserError(f"Calculation step not handled for instruction {instr.mnemonic} at address 0x{instr.address:04X}")
         
-        # if self.multi_step_divide == TwoStepDivide.PRE_ROUND_FOR_DIVIDATION:
-        #     # We just added a +5 for rounding, now set the flag that it's used and needs to be evaluated in the next expression
-        #     self.multi_step_divide = TwoStepDivide.ROUND_FOR_DIVIDATION
-        # elif self.multi_step_divide == TwoStepDivide.ROUND_FOR_DIVIDATION:
-        #     raise ParserError(f"Division step not handled for instruction {instr.mnemonic} at address 0x{instr.address:04X}")
-        
         
         self.saved_registers = SavedRegisters(
             A=self.emulator.A,
@@ -242,9 +232,10 @@ class CalcInstructionParser:
 
         # Not for our variable relevant now, but possibly a LUT access
         elif access.instr.target_value and self._check_for_rom_address(access.instr.target_value):
-            if self.lut_access.address_defined():
-                logger.warning(f"Expected LUT address at 0x{access.instr.target_value:04X} at instruction 0x{access.instr.address:04X},"
-                               f" but lut_address is already set to 0x{self.lut_access.get_lut_address():04X}. Overwriting.")
+            # Skip warning about it, as it happens quite often in LUT accesses (mainly A/C units)
+            #if self.lut_access.address_defined():
+            #    logger.warning(f"Expected LUT address at 0x{access.instr.target_value:04X} at instruction 0x{access.instr.address:04X},"
+            #                   f" but lut_address is already set to 0x{self.lut_access.get_lut_address():04X}. Overwriting.")
             
             self.lut_access.set_lut_address(access.instr.target_value)
             
@@ -406,30 +397,6 @@ class CalcInstructionParser:
         # For safety reasons not to miss a LUT
         elif self._check_for_rom_address(self.saved_registers.X):
             raise NotImplementedError("Expected a defined lookup table")
-
-
-
-            # TODO: Jetzt eine Abfrage, ob was mit der LUT gemacht wurde
-            # -> ist X immer noch die LUT? nur auf gleiche Adresse reicht nicht, kann ja 0 sein und dann die gleiche Adresse sein
-            # -> in den anderen Funktionen ggfs. ein Flag setzen: Wenn LUT-Adresse exisitert, dann Flag, wenn an X gebastelt wurde?
-            # x_flag_modified_after_lut_set = False
-            #------------------- abx
-                        # TODO Prüfen, ob das immer so vernünftig ist -> ANpassen!
-            # if self._check_for_rom_address(self.emulator.X):
-            #     if self.lut_address is None:
-            #         raise NotImplementedError("Expected LUT address at ABX instruction because of Rom address range, but none defined.")
-            #     #self.lut_address = self.saved_registers.X
-            #     self.lut_expr = self.current_expr
-
-            #     self.add_set_lookup_table()
-            #--------------------------
-        
-            # Check if we're still accessing ROM data -> then it's a LUT access
-            #if self._check_for_rom_address(self.lut_access.get_lut_address()):
-            #    self.add_set_lookup_table(16, self.lut_access.lut_expr)
-            #else:
-            #    raise NotImplementedError("Expected LUT address, but accessed non-ROM area.")
-      
 
 
     # --- Instruction handlers ---
@@ -781,21 +748,9 @@ class CalcInstructionParser:
 
     def cmpa(self, instr: Instruction, access: MemAccess):
         self._compare(instr, access, "A")
-        # if self.new_calc_register == "A":
-        #     #self.raw_calculations.append(f" ?= {instr.target_value}")
-        #     self.last_tested_expr = self.current_expr
-        #     self.last_tested_value = instr.target_value
-        #     self.calc_register_involed = True
-        # else:
-        #     self.calc_register_involed = False
     
     def cmpb(self, instr: Instruction, access: MemAccess):
         self._compare(instr, access, "B")
-        # if self.new_calc_register == "B":
-        #     #self.raw_calculations.append(f" ?= {instr.target_value}")
-        #     raise NotImplementedError("cmpb handling not implemented yet.")
-        # else:
-        #     self.calc_register_involed = False
     
     def tst(self, instr: Instruction, access: MemAccess):
         if self.new_calc_address == instr.target_value:
@@ -926,7 +881,12 @@ class CalcInstructionParser:
         if func is not None:
             func(instr, access)
         else:
-            logger.debug(f"Skipping JSR to 0x{instr.target_value:04X} at address 0x{instr.address:04X}")
+            func_name = self.rom_cfg.get_by_address(instr.target_value)
+            if func_name is not None:
+                func_name = f" [{func_name.name}]"
+            else:
+                func_name = ""
+            logger.debug(f"Skipping JSR to 0x{instr.target_value:04X}{func_name} at address 0x{instr.address:04X}")
 
         self.jsr_level += 1
 
@@ -943,35 +903,35 @@ class CalcInstructionParser:
                 continue
             if cond == False:
                 raise NotImplementedError("Condition is always false, no solution possible. TODO")
-            # Versuche, die Gleichung nach self.symbol zu lösen
+            # Generic case: solve eq for self.symbol
             eq = sp.Eq(cond.lhs, cond.rhs) # TODO War 0
-            # Sonderfall: Enthält die Gleichung eine LookupTable-Funktion?
+            # Generic case: solve eq for self.symbol
             lut_funcs = [f for f in cond.lhs.atoms(sp.Function) if isinstance(f, LookupTable)]
             if lut_funcs:
-                # Für jede gefundene LUT: Finde alle Indizes, für die LUT(index) == 0
+                # For each found LUT: find all indices for which LUT(index) == 0
                 for lut in lut_funcs:
-                    # Versuche, die Gleichung nach dem Argument der LUT zu lösen
+                    # Try to get the argument of the LUT
                     arg = lut.args[0]
-                    # Check for indiceis where LUT(arg) == rhs (usually 0)
+                    # Check for indices where LUT(arg) == rhs (usually 0)
                     indices = lut.func.preimage(eq.rhs)
                     for idx in indices:
-                        # Falls arg == self.symbol, ist idx direkt ein Testwert
-                        # Falls arg ein Ausdruck ist (z.B. 2*x1), löse nach self.symbol
+                        # If arg == self.symbol, idx is directly a test value
+                        # If arg is an expression (e.g. 2*x1), solve for self.symbol
                         if arg == self.symbol:
                             solved_values.add(sp.Integer(idx))
                         else:
-                            # Löst z.B. 2*x1 == idx nach x1
+                            # Solve e.g. 2*x1 == idx to x1
                             sols = sp.solve(sp.Eq(arg, idx), self.symbol)
                             for s in sols:
                                 if s.is_real and 0 <= s <= 255:
                                     solved_values.add(int(s))
             else:
-                # Allgemeiner Fall: Löse die Gleichung nach self.symbol
+                # Generic case: solve eq for self.symbol
                 sols = sp.solve(eq, self.symbol)
                 for s in sols:
                     if s.is_real and 0 <= s <= 255:
                         solved_values.add(int(s))
-            # Optional: Teste Werte knapp unter/über der Grenze (z.B. für Ungleichungen)
+            # Add neighboring values to account for rounding issues
             for s in list(solved_values):
                 for off in (-1, +1):
                     val = int(max(0, min(255, s + off)))
@@ -984,7 +944,7 @@ class CalcInstructionParser:
     def _extract_factor_and_index(self, expr: sp.Expr, factor: Optional[int] = None) -> tuple[int, sp.Basic]:
         # If we got a factor delivered and there is no symbol, we use a fixed index, broken down by the factor
         if factor is not None and not self.symbol in self.current_expr.free_symbols:
-            index_var = expr / sp.Integer(factor)
+            index_var = expr / sp.Integer(factor) # type: ignore
             return factor, index_var
 
         if isinstance(expr, sp.Mul):
@@ -1029,10 +989,12 @@ class CalcInstructionParser:
         if self.current_expr is not None:
             self.current_expr = -self.current_expr
     
+
     def calculate_decimal_places(self, decimal_places: int):
         if decimal_places > 0:
             self.raw_calculations.append(f" / {10 ** decimal_places}")
             self.current_expr = self.current_expr / (10 ** decimal_places) 
+
 
     def finalize_simplify_equations(self, eq_pieces: list[tuple[sp.Expr | None, Boolean]]) -> sp.Expr:
         # Remove duplicates with same condition
@@ -1043,7 +1005,7 @@ class CalcInstructionParser:
         for expr, cond in eq_pieces:
             grouped.setdefault(expr, []).append(cond)
 
-        combined_equations: list[tuple[sp.Expr | None, Boolean]] = []
+        combined_equations: list[tuple[sp.Expr | None, sp.Expr]] = []
         #for expr, conds in grouped.items():
         for expr, conds in grouped.items():
             condition = sp.Or(*conds)
@@ -1059,44 +1021,28 @@ class CalcInstructionParser:
         # Get Lookup table objects back if included
         return LookupTableHelper.reverse_substitute_lookup_tables(self.rom_cfg.lookup_tables, final_expr_subst)
     
-    def get_index_values(self) -> list[int]:
-        '''
-        Get possible index values from the current LUT expression
-        '''
-        # TODO Passt so nicght, er gibt die Indizies aus, wie sie in der LUT stehen. Aber das sind nicht unbedingt die X1 SSM-Werte!
-        if self.possible_index_values:
-            return self.possible_index_values
-        else:
-            return list(range(256))
-        
-    
-    # def sort_conditions(self, conditions: list[Relational]) -> list[Relational]:
-    #     """
-    #     Order conditions to get the True and ne conditions at the end
-    #     """
-    #     def condition_key(cond: Relational):
-    #         if cond is sp.true:
-    #             return 3
-    #         elif cond.has(sp.Ne):
-    #             return 2
-    #         elif cond.has(sp.Eq):
-    #             return 0
-    #         else:
-    #             return 1
-        
-    #     return sorted(conditions, key=condition_key)
-
+    # def get_index_values(self) -> list[int]:
+    #     '''
+    #     Get possible index values from the current LUT expression
+    #     '''
+    #     # TODO Passt so nicght, er gibt die Indizies aus, wie sie in der LUT stehen. Aber das sind nicht unbedingt die X1 SSM-Werte!
+    #     if self.possible_index_values:
+    #         return self.possible_index_values
+    #     else:
+    #         return list(range(256))
 
     def condition_priority(self, cond: sp.Expr) -> int:
         """
-        Liefert die Sortierpriorität für eine finale Bedingung (Boolean):
+        Get priority of a condition for sorting.
+        Lower values have higher priority.
+        Priorities:
         0: Eq(...)
         1: <, <=, >, >=
-        2: sonstige logische Formen (Or/And/Not/Xor/Relational unbekannt)
+        2: other relational conditions (Or/And/Not/Xor/Relational unknown)
         3: Ne(...), True
-        4: False (ganz ans Ende)
+        4: False (at the very end)
         """
-        # harte Wahrheitswerte
+        # "hard" true false cases
         if cond is sp.false or cond is False:
             return 5
         if cond is sp.true or cond is True:
@@ -1127,32 +1073,18 @@ class CalcInstructionParser:
                     priorities.append(2)
             if priorities:
                 return min(priorities)
-            # keine Relationalen Atom-Bedingungen gefunden: "sonstige Logik"
-            return 2
 
-        # generische Relational (SymPy kann Relational liefern ohne spezifische Klasse)
-        # if isinstance(cond, sp.Relational):
-        #     t = type(cond)
-        #     if t is Eq:
-        #         return 0
-        #     if t in (Lt, Le, Gt, Ge):
-        #         return 1
-        #     if t is Ne:
-        #         return 3
-        #     return 2
-
-        # Fallback
         return 2
     
 
     def sort_combined_equations(self, combined_equations: list[tuple[sp.Expr | None, sp.Expr]]) \
             -> list[tuple[sp.Expr | None, sp.Expr]]:
         """
-        Sortiert (expr, cond) nach cond gemäß condition_priority.
+        Sort (expr, cond) by cond according to condition_priority.
         """
         def key(item):
             expr, cond = item
-            # Tie-breaker: srepr(cond) sorgt für stabile Ordnung innerhalb gleicher Priorität
+            # Tie-breaker: srepr(cond) ensures stable order within the same priority
             return (self.condition_priority(cond), sp.srepr(cond))
         return sorted(combined_equations, key=key)
 

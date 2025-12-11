@@ -27,6 +27,7 @@ class ActionTableModel(QAbstractTableModel):
             scaling = self.action.scaling
             if scaling.scaling is not None:
                 rows.append(("Scaling", str(scaling.scaling)))
+                rows.append(("Scaling Address Pointer", f"0x{scaling.scaling_address_pointer:04X}"))
             if scaling.unit is not None:
                 rows.append(("Unit", scaling.unit))
             rows.append(("Precision Decimals", scaling.precision_decimals))

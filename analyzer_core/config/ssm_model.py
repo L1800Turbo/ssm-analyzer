@@ -169,6 +169,7 @@ class ActionType(IntEnum):
 class RomScalingDefinition:
     scaling: str
     precision_decimals: int
+    scaling_address_pointer: int
     unit: Optional[str] = None
     functions: list[str] = field(default_factory=list)
     lookup_tables: Optional[dict[int|str, int|str]] = field(default_factory=dict)

@@ -148,7 +148,7 @@ class PatternDetector:
             # if cur_instr.address < 0xBD84:
             #     instr_idx += 1
             #     continue
-            if cur_instr.address == 0xA9AB:
+            if cur_instr.address == 0xC15B:
                 pass
 
             # TODO: Er muss noch die passende Startadresse einlesen können, um nicht bei 0 anzufangen!
