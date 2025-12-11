@@ -131,9 +131,13 @@ class RomConfig:
     def get_by_address(self, address: int) -> Union[RomVarDefinition, None]:
         return self._by_address.get(address)
 
-    def check_for_address(self, name: str) -> bool:
+    def check_for_name(self, name: str) -> bool:
         rom_var = self.get_by_name(name)
         return rom_var is not None and rom_var.address is not None
+    
+    def check_for_function_address(self, address: int) -> bool:
+        rom_var = self.get_by_address(address)
+        return rom_var is not None and rom_var.type == RomVarType.FUNCTION and rom_var.address is not None
 
     def address_by_name(self, name: str) -> int:
         rom_var = self.get_by_name(name)

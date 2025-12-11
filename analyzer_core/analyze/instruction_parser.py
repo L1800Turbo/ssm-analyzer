@@ -28,7 +28,7 @@ class TwoStepComplement(IntEnum):
 
 class TwoStepDivide(IntEnum):
     NONE = 0
-    ROUND_FOR_DIVIDATION = 1  # +5 before division for 8bit rounding
+    ROUND_FOR_DIVIDATION = 1     # +5 before division for 8bit rounding
 
 @dataclass
 class SavedRegisters:
@@ -131,6 +131,15 @@ class CalcInstructionParser:
         if isinstance(haystack, (list, tuple)):
             return needle in haystack
         return False
+    
+    def __is_register_match(self, needle, haystack):
+        if needle == haystack:
+            return True
+        if needle == "D" and haystack in ("A", "B"):
+            return True
+        if needle in ("A", "B") and haystack == "D":
+            return True
+        return False
 
     # --- Handler functions called from outside ---
 
@@ -160,6 +169,13 @@ class CalcInstructionParser:
            old_multi_step_calc == self.multi_step_complement and \
            self.calc_register_involed:
             raise ParserError(f"Calculation step not handled for instruction {instr.mnemonic} at address 0x{instr.address:04X}")
+        
+        # if self.multi_step_divide == TwoStepDivide.PRE_ROUND_FOR_DIVIDATION:
+        #     # We just added a +5 for rounding, now set the flag that it's used and needs to be evaluated in the next expression
+        #     self.multi_step_divide = TwoStepDivide.ROUND_FOR_DIVIDATION
+        # elif self.multi_step_divide == TwoStepDivide.ROUND_FOR_DIVIDATION:
+        #     raise ParserError(f"Division step not handled for instruction {instr.mnemonic} at address 0x{instr.address:04X}")
+        
         
         self.saved_registers = SavedRegisters(
             A=self.emulator.A,
@@ -191,9 +207,9 @@ class CalcInstructionParser:
             self.raw_calculations.append("x1") # TODO später noch mehre Variablen unterstützen
             self.current_expr = self.symbol
 
-        elif self.new_calc_register == register:
-            # TODO überschreibt
-            logger.warning(f"Overwriting calculation register {register} at instruction 0x{access.instr.address:04X}")
+        elif self.__is_register_match(self.new_calc_register, register):
+            # On string based LUTs this happens quite often, so don't show a warning each time
+            #logger.warning(f"Overwriting calculation register {register} at instruction 0x{access.instr.address:04X}")
             self.raw_calculations.append(str(access.value))
             self.current_expr = sp.Integer(access.value)
 
@@ -283,7 +299,7 @@ class CalcInstructionParser:
         return possible_idx_vals
 
     def set_target_from_register_to_var(self, instr: Instruction, register: str):
-        if self.new_calc_register == register:
+        if self.__is_register_match(self.new_calc_register, register):
             self.new_calc_address = instr.target_value
             self.new_calc_register = None
             self.calc_register_involed = True
@@ -343,6 +359,7 @@ class CalcInstructionParser:
 
             # If we just added a +5 for rounding, remove it from the expression
             if self.multi_step_divide == TwoStepDivide.ROUND_FOR_DIVIDATION:
+                # TODO wird einfach ausgelassen -> Prüfen
                 self.current_expr = self.current_expr - 5  # type: ignore
                 self.multi_step_divide = TwoStepDivide.NONE
             self.current_expr = self.current_expr / self.saved_registers.D # type: ignore
@@ -452,6 +469,16 @@ class CalcInstructionParser:
             self.calc_register_involed = False
     
     def addd(self, instr: Instruction, access: MemAccess):
+
+        def check_for_division_rounding(target_value: int):
+            # Check if the target value is 5 for rounding before division
+            # TODO nur wenn +5 für Rundung reicht nicht, kann ja auch eine 5 enthalten sein in einer Summe
+            if target_value == 5:
+                self.multi_step_divide = TwoStepDivide.ROUND_FOR_DIVIDATION
+
+        if instr.target_value is None:
+            raise ParserError(f"Expected target value for ADDD instruction at 0x{instr.address:04X}")
+
         if self.new_calc_register == "D":
             self.raw_calculations.append(f" + {instr.target_value}")
 
@@ -461,10 +488,9 @@ class CalcInstructionParser:
                 self.current_expr = -self.current_expr # type: ignore
                 self.multi_step_complement = TwoStepComplement.NONE
             else:
+                check_for_division_rounding(instr.target_value)
+                
                 self.current_expr = self.current_expr + instr.target_value # type: ignore
-                if instr.target_value == 5:
-                    # If we just added one, reset any multi step calc
-                    self.multi_step_divide = TwoStepDivide.ROUND_FOR_DIVIDATION
 
             self.calc_register_involed = True
         elif self.new_calc_register == "B":
@@ -480,6 +506,9 @@ class CalcInstructionParser:
             if self._check_for_rom_address(self.saved_registers.D):
                 #self.lut_address = self.saved_registers.D
                 self.lut_expr = self.current_expr
+            else:
+                # Otherwise it could be a division rounding +5
+                check_for_division_rounding(self.saved_registers.D)
 
             self.raw_calculations.append(f" + {self.saved_registers.D}")
             self.current_expr = self.current_expr + self.saved_registers.D # type: ignore
@@ -734,7 +763,7 @@ class CalcInstructionParser:
             self.calc_register_involed = False
     
     def _compare(self, instr: Instruction, access: MemAccess, register: str):
-        if self.new_calc_register == register:
+        if self.__is_register_match(self.new_calc_register, register):
             #self.raw_calculations.append(f" ?= {instr.target_value}")
             self.last_tested_expr = self.current_expr
             # if instr.target_type == OperandType.INDIRECT:

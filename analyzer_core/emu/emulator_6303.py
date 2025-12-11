@@ -331,6 +331,9 @@ class Emulator6303:
             if instr.address == 0x2B75: # DIO1 bei 0x2C36 für 4AT könnte auch noch komisch werden -> romid3 abhängig
                 pass
 
+            if instr.address == 0x2CCF: # scaling_AC_MB_BLW
+                pass
+
             # TODO hier die steps auswerten?
             # TODO in eigene Log schmeißen direkt
 
@@ -1844,7 +1847,7 @@ class Emulator6303:
         old_PC = self.PC
         ma = self.__read_value16(instr)
 
-        if instr.target_value is None:
+        if ma.target_addr is None:
             raise ValueError("Couldn't determine jumping address for jsr.")
 
         # Push return address onto stack
@@ -1852,6 +1855,10 @@ class Emulator6303:
         if ret > 0xFFFF:
             raise ValueError("Jumping to instruction behind ROM!")
         self.push16(ret)
+
+        # Some functions only get known during emulation as they use dynamic addresses
+        # TODO sollte man sie hier mit fn_xxxx speichern und später noch ggfs umbenennen?
+        #self.rom_config.add_function_address(TODO NAme ma.target_addr)
 
         self.PC = ma.target_addr
         ma.next_instr_addr = self.PC

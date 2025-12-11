@@ -161,7 +161,7 @@ class SsmActionScalingFunction(SsmActionHelper):
         # Add a hook to the function 'print_switch_screen' which is responsible to printing the switch values on a DIO
         # Use this to enable Switches mode -> alternative: Check by name DIOx FAx
         # Decompilation and detection happens on the first switch, so we hook this only after we know the function address
-        if self.rom_cfg.check_for_address("print_switch_screen"):
+        if self.rom_cfg.check_for_name("print_switch_screen"):
             self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("print_switch_screen"), hook_post_print_switch_screen)
     
     def _emulate_receive_ssm_response(self):
@@ -181,9 +181,20 @@ class SsmActionScalingFunction(SsmActionHelper):
             logger.debug(f"Scaling function at 0x{self.scaling_fn_ptr:04X} already known, skipping emulation.")
             if self.mt_entry.item_label:
                 self.rom_cfg.scaling_addresses[self.scaling_fn_ptr].functions.append(self.mt_entry.item_label)
+            else:
+                logger.warning(f"Scaling function at 0x{self.scaling_fn_ptr:04X} has no item label.")
             return
         
-        decimal_places: int = 0
+        # Also, save it as a global function address
+        if not self.rom_cfg.check_for_function_address(self.scaling_fn_ptr):
+            fn_label_proto = f"fn_scaling_{self.current_device.name}_{self.mt_entry.item_label}"
+            counter = 1
+            while self.rom_cfg.check_for_name(f"{fn_label_proto}_{counter}"):
+                counter += 1
+            fn_label = f"{fn_label_proto}_{counter}"
+            self.rom_cfg.add_function_address(fn_label, self.scaling_fn_ptr)
+        
+        decimal_places: int = -1
         
         ssm_inputs: List[int] = [0]   # initial TX values to test
         seen_samples: set[int] = set()
@@ -207,8 +218,15 @@ class SsmActionScalingFunction(SsmActionHelper):
             )
 
             # After running, collect modified variables
-            decimal_places = self.emulator.mem.read(self.rom_cfg.address_by_name('decimal_places'))
-            self.instr_parser.calculate_decimal_places(decimal_places)
+            current_decimal_places = self.emulator.mem.read(self.rom_cfg.address_by_name('decimal_places'))
+            self.instr_parser.calculate_decimal_places(current_decimal_places)
+
+            if decimal_places == -1:
+                decimal_places = current_decimal_places
+            elif decimal_places != current_decimal_places:
+                logger.warning(f"Different decimal places detected during scaling function emulation: previous {decimal_places}, current {current_decimal_places}. Using maximum.")
+                decimal_places = max(decimal_places, current_decimal_places)
+
 
             # TODO Decimal places müssen ja auch in die Scaling-Definition später rein, also für jede Variante und prüfen?
             # Als condition? in einen Datentyp`?`
@@ -259,6 +277,9 @@ class SsmActionScalingFunction(SsmActionHelper):
                 lookup_tables=LutHelper.get_lookup_table_values(final_expr, self.instr_parser.symbol) if self.instr_parser.found_luts > 0 else None,
                 functions=[self.mt_entry.item_label] if self.mt_entry.item_label else []
             )
+
+        # TODO hier eine Art Checker einbauen:
+        # Alle relevanten indizies einfügen, emulation laufen lassen und hinterher aus den Bildschirmwerten prüfen, ob die rauskommen, die erwartet werden
 
 
     def run_post_actions(self):

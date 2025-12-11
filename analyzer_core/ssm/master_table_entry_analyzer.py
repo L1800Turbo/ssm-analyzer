@@ -66,7 +66,7 @@ class MasterTableEntryAnalyzer:
                         pass
                     else:
                         raise ValueError(f"Extracted item label index '{result.group(2)}' does not match MasterTable entry menu item '{self.mt_entry.menu_item_str()}'")
-                return result.group(1)
+                return result.group(1).strip()
             raise ValueError(f"Could not extract item label from upper label '{upper_label}'")
             
 

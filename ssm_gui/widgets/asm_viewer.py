@@ -426,7 +426,7 @@ class AsmViewerWidget(QWidget):
         # Function starts/callers from core
         reset_addr = self.rom_image.reset_vector()
         functions: Dict[int, FunctionInfo] = extract_functions_and_callers(
-            instructions, reset_addr, self.curr_rom_service.rom_cfg)
+            instructions, self.curr_rom_service.rom_cfg, reset_addr)
 
         # Create display elements
         display_items: List[DisplayItem] = []

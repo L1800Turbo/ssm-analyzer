@@ -126,7 +126,7 @@ class RomIdEntryAnalyzer:
                 self.emulator.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x0)
 
             # AT Axx RomIDs don't exist before '97
-            if rom_cfg.check_for_address('romid_AT_Axxx_scheme'):
+            if rom_cfg.check_for_name('romid_AT_Axxx_scheme'):
                 if current_device == CurrentSelectedDevice.AT and (self.entry.romid0 >> 8) == 0xA:
                     self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x1)
                 else:
