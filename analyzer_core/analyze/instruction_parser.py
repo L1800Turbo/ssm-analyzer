@@ -28,7 +28,7 @@ class TwoStepComplement(IntEnum):
 
 class TwoStepDivide(IntEnum):
     NONE = 0
-    ROUND_FOR_DIVIDATION = 1     # +5 before division for 8bit rounding
+    ROUND_FOR_DIVISION = 1     # +5 before division for 8bit rounding
 
 @dataclass
 class SavedRegisters:
@@ -60,26 +60,38 @@ class CalcInstructionParser:
         ]
 
         # Relevant addresses for calculation
-        self.function_ptrs: dict[int, Callable[[Instruction, MemAccess], None]] = {
-            rom_cfg.address_by_name("divide"): self._divide,
-            rom_cfg.address_by_name("mul16bit"): self._mul16bit,
+        mock_function_names: dict[str, Callable[[Instruction, MemAccess], None]] = {
+            "divide": self._divide,
+            "mul16bit": self._mul16bit,
             #rom_cfg.address_by_name("print_lower_value"): lambda instr, access: None,
 
-            rom_cfg.address_by_name("copy_to_lower_screen_buffer"): self._copy_to_lower_screen_buffer,
-            rom_cfg.address_by_name("copy_to_lower_screen_buffer_unit"): lambda instr, access: None,
-
-            # fn_copy_to_lower_screen_buffer: ggfs ergänzen, zum mocken, damit die Nachricht verschwindet, oder auch um die LUT zu verarbeiten. aktuell abx
+            "copy_to_lower_screen_buffer": self._copy_to_lower_screen_buffer,
+            "print_lower_value": lambda instr, access: None,
+            "print_sign": lambda instr, access: None,
+            "copy_to_lower_screen_buffer_unit": lambda instr, access: None,
         }
+        self.mock_function_ptrs: dict[int, Callable[[Instruction, MemAccess], None]] = {}
+        for fn_name, func in mock_function_names.items():
+            addr_def = self.rom_cfg.get_by_name(fn_name)
+            if addr_def is not None and addr_def.address is not None:
+                self.mock_function_ptrs[addr_def.address] = func
+
+
 
         # TODO Hardcoded auf eins zunächjst
         self.symbol = sp.Symbol("x1", real = True)
-        #self.neg_flag_sym = sp.Symbol("neg_flag", integer=True)
         self.neg_flag_val = 0
 
         # How many lookup tables were found in all function runs
         self.found_luts : int = 0
 
         self.init_new_instruction()
+
+    # def _set_function_mocks(self):
+    #     for fn_name, func in self.function_ptrs.items():
+    #         addr_def = self.rom_cfg.get_by_name(fn_name)
+    #         if addr_def is not None and addr_def.address is not None:
+    #             self.emulator.hooks.mock_function(addr_def.address, func)
 
     def init_new_instruction(self):
         self.raw_calculations: list[str] = []
@@ -92,6 +104,7 @@ class CalcInstructionParser:
         self.conditions: list[Relational] = []
         self.multi_step_complement: TwoStepComplement = TwoStepComplement.NONE
         self.multi_step_divide: TwoStepDivide = TwoStepDivide.NONE
+        self.multi_step_divide_counter: int = 0
 
 
         # Helpers for Lookup tables
@@ -118,8 +131,8 @@ class CalcInstructionParser:
         )
         self.last_instruction: Instruction | None = None
 
-    def add_function_mocks(self):
-        self.function_ptrs[ self.rom_cfg.address_by_name("print_lower_value") ] = lambda instr, access: None
+    # def add_function_mocks(self):
+    #     self.function_ptrs[ self.rom_cfg.address_by_name("print_lower_value") ] = lambda instr, access: None
     
     def __is_address_match(self, needle, haystack):
         if needle == haystack:
@@ -166,6 +179,13 @@ class CalcInstructionParser:
            self.calc_register_involed:
             raise ParserError(f"Calculation step not handled for instruction {instr.mnemonic} at address 0x{instr.address:04X}")
         
+        # Did we have a rounding for a possible divition but no division happened?
+        if self.multi_step_divide == TwoStepDivide.ROUND_FOR_DIVISION and self.calc_register_involed:
+            self.multi_step_divide_counter += 1
+            if self.multi_step_divide_counter >= 3:
+                # Assume that the +5 addition was not meant for rounding before division
+                self.multi_step_divide = TwoStepDivide.NONE
+        
         
         self.saved_registers = SavedRegisters(
             A=self.emulator.A,
@@ -176,8 +196,6 @@ class CalcInstructionParser:
             PC=self.emulator.PC
         )
         self.last_instruction = instr
-
-        #print(f"Current calculation: {self.calculations}", flush=True)
     
     def _check_for_rom_address(self, addr: int) -> bool:
         ''' Check if the given address is in a ROM or MAPPED_ROM region '''
@@ -344,16 +362,17 @@ class CalcInstructionParser:
         and any(addr in self.hex_buffer for addr in self.new_calc_address)
     )'''
             # Clean up the string so only "+5" remains (remove spaces before, after, and in between)
-            if self.raw_calculations and self.raw_calculations[-1].replace(" ", "") == "+5":
-                self.raw_calculations.pop()  # Remove the +5 before division, it's only for 8bit rounding  
-            self.raw_calculations.append(f"/ {self.saved_registers.D}")
+            # if self.raw_calculations and self.raw_calculations[-1].replace(" ", "") == "+5":
+            #     self.raw_calculations.pop()  # Remove the +5 before division, it's only for 8bit rounding  
 
             # If we just added a +5 for rounding, remove it from the expression
-            if self.multi_step_divide == TwoStepDivide.ROUND_FOR_DIVIDATION:
+            if self.multi_step_divide != TwoStepDivide.NONE:
                 # TODO wird einfach ausgelassen -> Prüfen
                 self.current_expr = self.current_expr - 5  # type: ignore
+                self.raw_calculations.append("-5 (rounding removal)")
                 self.multi_step_divide = TwoStepDivide.NONE
             self.current_expr = self.current_expr / self.saved_registers.D # type: ignore
+            self.raw_calculations.append(f"/ {self.saved_registers.D}")
             
             self.new_calc_register = None
             self.new_calc_address = self.hex_buffer
@@ -440,8 +459,11 @@ class CalcInstructionParser:
         def check_for_division_rounding(target_value: int):
             # Check if the target value is 5 for rounding before division
             # TODO nur wenn +5 für Rundung reicht nicht, kann ja auch eine 5 enthalten sein in einer Summe
-            if target_value == 5:
-                self.multi_step_divide = TwoStepDivide.ROUND_FOR_DIVIDATION
+            test_value = target_value - 5
+            if test_value >= 0:
+                self.multi_step_divide = TwoStepDivide.ROUND_FOR_DIVISION
+                self.multi_step_divide_counter = 0
+
 
         if instr.target_value is None:
             raise ParserError(f"Expected target value for ADDD instruction at 0x{instr.address:04X}")
@@ -717,6 +739,12 @@ class CalcInstructionParser:
             self.current_expr = self.current_expr * 0 # type: ignore
 
             self.calc_register_involed = True
+        elif self.new_calc_register == "D":
+            # TODO More a workaround for now
+            self.raw_calculations.append(" * 0 (hi)")
+            self.current_expr = (self.current_expr % 256)  # type: ignore
+
+            self.calc_register_involed = True
         else:
             self.calc_register_involed = False
 
@@ -724,6 +752,12 @@ class CalcInstructionParser:
         if self.new_calc_register == "B":
             self.raw_calculations.append(" * 0")
             self.current_expr = self.current_expr * 0 # type: ignore
+
+            self.calc_register_involed = True
+        elif self.new_calc_register == "D":
+            # TODO More a workaround for now
+            self.raw_calculations.append(" * 0 (lo)")
+            self.current_expr = self.current_expr - (self.current_expr % 256)  # type: ignore
 
             self.calc_register_involed = True
         else:
@@ -877,7 +911,7 @@ class CalcInstructionParser:
     def jsr(self, instr: Instruction, access: MemAccess):
         if instr.target_value is None:
             raise ParserError(f"JSR instruction without target value at address 0x{instr.address:04X}")
-        func = self.function_ptrs.get(instr.target_value, None)
+        func = self.mock_function_ptrs.get(instr.target_value, None)
         if func is not None:
             func(instr, access)
         else:
@@ -1059,14 +1093,14 @@ class CalcInstructionParser:
         # Falls cond ein zusammengesetzter boolescher Ausdruck ist (Or/And/Not/Xor),
         # bewerte nach den enthaltenen Relationen:
         if isinstance(cond, Boolean):
-            # Versuche die "stärkste" (niedrigste) Priorität innerhalb zu finden
-            # z.B. Or(Eq(...), Ne(...)) => min(0, 3) => 0
+            # Try to get lowest priority among contained relations
             priorities = []
             for atom in cond.atoms(Relational):
                 if isinstance(atom, sp.Eq):
                     priorities.append(0)
                 elif isinstance(atom, (sp.Lt, sp.Le, sp.Gt, sp.Ge)):
-                    priorities.append(1)
+                    # Add one point more towards lower priority: multiple relational conditions are usually the default condition
+                    priorities.append(2)
                 elif isinstance(atom, sp.Ne):
                     priorities.append(3)
                 else:
