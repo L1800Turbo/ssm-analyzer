@@ -1,3 +1,4 @@
+from decimal import ROUND_HALF_DOWN, ROUND_HALF_UP, Decimal
 import logging
 from typing import List, Optional
 
@@ -40,7 +41,7 @@ class SsmActionScalingFunction(SsmActionHelper):
 
         self.unit: Optional[str] = None
 
-        logger.debug(f"Running Scaling Function for MT Entry {mt_entry.item_label} {mt_entry.menu_item_str()} with scaling index {mt_entry.scaling_index}")
+        logger.debug(f"Running Scaling Function for MT Entry '{mt_entry.item_label}' {mt_entry.menu_item_str()} with scaling index {mt_entry.scaling_index}")
 
         self._ensure_scaling_disassembly()
         self._set_unit()
@@ -48,7 +49,7 @@ class SsmActionScalingFunction(SsmActionHelper):
 
         self.instr_parser = CalcInstructionParser(self.rom_cfg, self.emulator, read_address=self.rom_cfg.address_by_name("ssm_rx_byte_2"))
         # Add function mocks where we need information from the disassembly as variable names could be unknown before
-        self.instr_parser.add_function_mocks()
+        #self.instr_parser.add_function_mocks()
         self.instr_parser.init_new_instruction()
 
         self._emulate_receive_ssm_response()
@@ -85,7 +86,8 @@ class SsmActionScalingFunction(SsmActionHelper):
             # Just return from the function
             em.mock_return()
 
-        self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_value"), mock_skip)
+        # Don't skip lower value print, takes more emulated steps but it's possible to do a later calculation check with the output
+        #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_value"), mock_skip)
 
         # As soon as we read the SSM RX bytes in the scaling function, we log the tracing
         def hook_read_ssm_rx_bytes_in_scaling_fn(addr: int, value: int, mem: MemoryManager):
@@ -121,10 +123,16 @@ class SsmActionScalingFunction(SsmActionHelper):
         #    em.mock_return()
         
         def mock_hex_value_to_ssm_light(em: Emulator6303):
-            # Get switch values that should have been printed by now
-            if self.upper_screen_line is None or self.lower_screen_line is None:
-                raise RuntimeError("Switch screen lines not captured before hex_value_to_ssm_light call.")
-            switch_labels = self._get_switch_labels(self.upper_screen_line, self.lower_screen_line)
+            '''
+            When loaded: A: SSM rx byte, X: Pointer to switch labels
+            Sets the SSM lights according to the switch definitions in SSM
+            '''
+
+
+            upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
+            lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
+
+            switch_labels = self._get_switch_labels(upper_screen_line, lower_screen_line)
 
             # At the time of this function call, the X pointer leads to the switch assignments starting with the XOR part,
             # followed by the switch bit assignments in form of a byte for each switch (0-9)
@@ -134,37 +142,77 @@ class SsmActionScalingFunction(SsmActionHelper):
             for idx, label in switch_labels.items():
                 # Get switch value from the corresponding byte
                 switch_value = em.read8(em.X + 1 + idx)
+                bit_value = switch_value.bit_length() - 1
 
-                self.switch_defs.append(RomSwitchDefinition(
-                    name=label,
-                    inverted=(switch_value & xor_value) == 1, # TODO prüfen ob das so stimmt
-                    bit=switch_value.bit_length() - 1
-                ))
+                # Happens e.g. in AC DI: Two switch labels with the same meaning, which combine two labels, e.g. "AC SW" 
+                # For this: loop over all switches and check for same bit value
+                double_index = False
+                for switch in self.switch_defs:
+                    if switch.bit == bit_value:
+                        switch.name += f" {label}"
+                        double_index = True
+
+                if not double_index:
+                    self.switch_defs.append(RomSwitchDefinition(
+                        name=label,
+                        inverted=(switch_value & xor_value) == 1, # TODO prüfen ob das so stimmt
+                        bit=bit_value
+                    ))
+
+
 
             em.mock_return()
 
-        def hook_post_print_switch_screen(em: Emulator6303, access):
-            self.use_switches_mode = True
+        #def hook_post_print_switch_screen(em: Emulator6303, access):
+            #self.use_switches_mode = True
 
             # Mock the print functions to capture the switch labels
             #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
             #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
 
             # Save the screen lines directly in this function only print_upper_screen is called, the other one happens after the Scaling fn
-            self.upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
-            self.lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
+            #self.upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
+            #self.lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
 
             # Mock the hex value printer entirely as it might be simpler than emulating it for all SSM values
-            self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("hex_value_to_ssm_light"), mock_hex_value_to_ssm_light)
+            #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("hex_value_to_ssm_light"), mock_hex_value_to_ssm_light)
 
 
         # Add a hook to the function 'print_switch_screen' which is responsible to printing the switch values on a DIO
         # Use this to enable Switches mode -> alternative: Check by name DIOx FAx
         # Decompilation and detection happens on the first switch, so we hook this only after we know the function address
+
+        ######################################################
         # TODO Funktioniert nur für EGi, bei den anderen reicht das nicht aus. Diese nutzen nciht diese Funktion print_switch_screen_from_addressIndex_pointer,
         # die erst auf romid3 geht, sondern direkt print_upper_screen -> Also doch FAyxx
-        if self.rom_cfg.check_for_name("print_switch_screen"):
-            self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("print_switch_screen"), hook_post_print_switch_screen)
+        # und er muss auf std upper_ssm_lights dann seinen hook machen, nahc hex_value_to_ssm_light wird manchmal n0coh was gerechnet
+        #if self.rom_cfg.check_for_name("print_switch_screen"):
+        #    self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("print_switch_screen"), hook_post_print_switch_screen)
+
+        if self.mt_entry.menu_item_str().startswith("FA"):
+            self.use_switches_mode = True
+
+            # We mock the function to set the lights completely
+            '''
+            When used for several addresses it looks like this:
+
+            ldx	#$34E5
+            jsr	print_switch_screen_from_addressIndex_pointer
+            ldaa	ssm_rx_buffer_0
+            jsr	hex_value_to_ssm_light(A: SSM-RX-Byte, X: SwitchesPtr_HinterLabels)->D
+            std	print_hex_buffer_0
+            ldaa	ssm_rx_buffer_1
+            jsr	hex_value_to_ssm_light(A: SSM-RX-Byte, X: SwitchesPtr_HinterLabels)->D
+            addd	print_hex_buffer_0
+            std	upper_ssm_lights
+            rts
+
+            Values from several addresses will only be added together
+
+            TODO currently this will call the function multiple times if several addresses are used
+            '''
+            self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("hex_value_to_ssm_light"), mock_hex_value_to_ssm_light)
+            
     
     def _emulate_receive_ssm_response(self):
         # Emulate that a response has been received
@@ -200,7 +248,8 @@ class SsmActionScalingFunction(SsmActionHelper):
         
         ssm_inputs: List[int] = [0]   # initial TX values to test
         seen_samples: set[int] = set()
-        possible_index_values: list[int] = []
+        #possible_index_values: list[int] = []
+        emulated_output: dict[int, tuple[str, str]] = {}
 
         eq_pieces: list[tuple[sp.Expr | None, Boolean]] = []
 
@@ -229,9 +278,13 @@ class SsmActionScalingFunction(SsmActionHelper):
                 logger.warning(f"Different decimal places detected during scaling function emulation: previous {decimal_places}, current {current_decimal_places}. Using maximum.")
                 decimal_places = max(decimal_places, current_decimal_places)
 
-
             if self.emulator.mem.read(self.rom_cfg.address_by_name('print_-_sign')) == 1:
                 self.instr_parser.negate_current_expression()
+
+            # To check the calculation afterwards, collect the display output from this run
+            upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, self.emulator, 'ssm_display_y0_x0')
+            lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, self.emulator, 'ssm_display_y1_x0')
+            emulated_output[rx_test_value] = (upper_screen_line, lower_screen_line)
             
             # Get jump conditions from guards to find new test inputs
             for value in self.instr_parser.solve_jump_conditions():
@@ -259,9 +312,9 @@ class SsmActionScalingFunction(SsmActionHelper):
         # Check if we are in Switches mode where we don't need a static scaling but the switch values
         # Switches are already handled in the mocks above
         if not self.use_switches_mode:
-            self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = RomScalingDefinition(
+            current_scaling = RomScalingDefinition(
                 #scaling=sp.simplify(final_expr, force=True),
-                scaling=str(final_expr),
+                scaling=final_expr,
                 scaling_address_pointer = self.scaling_fn_ptr,
                 precision_decimals=decimal_places,
                 unit=self.unit,
@@ -269,7 +322,11 @@ class SsmActionScalingFunction(SsmActionHelper):
                 functions=[self.mt_entry.item_label] if self.mt_entry.item_label else []
             )
 
+            self._check_label_results(emulated_output, current_scaling)
+            self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = current_scaling
+
         # TODO hier eine Art Checker einbauen:
+        print(f"hier dann vergleichen mit {emulated_output}")
         # Alle relevanten indizies einfügen, emulation laufen lassen und hinterher aus den Bildschirmwerten prüfen, ob die rauskommen, die erwartet werden
 
 
@@ -297,7 +354,94 @@ class SsmActionScalingFunction(SsmActionHelper):
                 labels[idx] = lower_val
         return labels
 
+    def _check_label_results(self, emulated_output: dict[int, tuple[str, str]], scaling_definition: RomScalingDefinition) -> bool:
+
+        # TODO Eigentlich ja auch notwendig, mittlere werte zu nehmen, wenn ein branch oder so drin ist?
+
+        def get_label_result(self, line: str, has_lookup_tables: bool) -> float|str:
+            label = line.strip()
+            if self.unit:
+                if label.endswith(self.unit):
+                    label = label[: -len(self.unit)].rstrip()
+                # for LUT values without unit, not 100% clean: INT LUTs can have a unit, but should be caught above
+                elif has_lookup_tables:
+                    pass
+                else:
+                    raise ValueError("Unit is set but label does not end with it.")
+            
+            # Check if we convert the label to an integer
+            try:
+                return float(label)
+            except ValueError:
+                # Otherwise assume a string based lookup table and return the string
+                return label
         
+        for rx_value, (upper_line, lower_line) in emulated_output.items():
+            # First, check for a lookup table match and try to evaluate directly
+            # TODO und einheiten??
+            #if scaling_definition.lookup_tables is not None:
+            #    if lower_line.strip() in scaling_definition.lookup_tables.values():
+            #        continue
+
+            label_result = get_label_result(self, lower_line, scaling_definition.lookup_tables is not None)
+
+            # Evaluate the scaling expression for this rx_value
+            #expr = sp.sympify(scaling_definition.scaling)
+            expr = scaling_definition.scaling
+            # Replace x1 with rx_value (and currently every other free symbol as well)
+            calc_value = None
+            for sym in expr.free_symbols:
+                calc_value = expr.subs(sym, rx_value)
+            
+            #TODO oder
+            #calc_value = expr.subs({"x1": rx_value})
+            
+            if calc_value is None:
+                raise ValueError("No calculable expression found for scaling definition.")
+            
+            # Check if the result is still a LookupTable function, then it should be a string LUT where we check for string equality
+            if isinstance(calc_value, sp.Function) and issubclass(calc_value.func, LookupTable):
+                if calc_value.func.is_String:
+                    index = int(calc_value.args[0]) # type: ignore
+                    if calc_value.func.table_data[index] == label_result:
+                        continue
+                    else:
+                        raise NotImplementedError("Didn't expect a string LUT at this point")
+            
+            if scaling_definition.scaling_address_pointer == 0x2795:
+                pass
+
+            # Round expr to the number of decimal places in scaling_definition
+            if scaling_definition.precision_decimals is not None and scaling_definition.precision_decimals >= 0:
+                quant = Decimal("1").scaleb(-scaling_definition.precision_decimals)
+                d = Decimal(str(sp.N(calc_value)))
+
+                # Workaround for positive/negative numbers, as SSM software seems to round them differently
+                if d >= 0:
+                    # Use ROUND_HALF_UP for positive numbers (0.25 -> 0.3...)
+                    calc_value = d.quantize(quant, rounding=ROUND_HALF_UP)
+                else:
+                    # Use ROUND_HALF_DOWN for negative numbers (-0.25 -> 0.2...)
+                    calc_value = d.quantize(quant, rounding=ROUND_HALF_DOWN)
+
+                # Use ROUND_HALF_DOWN, as it matches the SSM behavior better (0.25 -> 0.3...)
+                #calc_value = Decimal(str(sp.N(calc_value))).quantize(quant, rounding=ROUND_HALF_DOWN)
+                #calc_value = round(float(calc_value), scaling_definition.precision_decimals)
+                # factor = 10 ** scaling_definition.precision_decimals
+                # # Use sympy's nsimplify to round towards zero (truncate), not floor
+                # calc_value = sp.nsimplify(int(calc_value * factor) / factor, rational=True)
+
+            if sp.Float(calc_value) != label_result:
+                if label_result == 0 and sp.Abs(calc_value) <= sp.Float(0.1):
+                    # Workaround around 0 for rounding issues
+                    logger.warning(f"Calculated value '{calc_value}' at 0x{scaling_definition.scaling_address_pointer:04X} for RX value {rx_value}"
+                                   f" differs slightly from expected label '{label_result}'. Accepting due to rounding from decimal places.")
+                else:
+                    raise ValueError(f"Calculated value '{calc_value}' at 0x{scaling_definition.scaling_address_pointer:04X} for RX value {rx_value}"
+                                 f" does not match expected label '{label_result}'. Calculated: {expr}")
+            
+        return True
+            
 
     def _set_unit(self):
         '''

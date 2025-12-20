@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 import struct
 from typing import Optional, Union
+import sympy as sp
 
 # Circular imports avoided
 # from analyzer_core.ssm.action_functions.action_helper import SsmAction
@@ -167,7 +168,7 @@ class ActionType(IntEnum):
 
 @dataclass
 class RomScalingDefinition:
-    scaling: str
+    scaling: sp.Expr
     precision_decimals: int
     scaling_address_pointer: int
     unit: Optional[str] = None

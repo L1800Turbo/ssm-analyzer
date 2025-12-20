@@ -2,6 +2,16 @@
   "version": "0.1",
   "static_rom_pattern": [
     {
+      "name": "initialize",
+      "pattern": [
+        { "mnemonic": "ldd", "op_str": "0xFFFF" },
+        { "mnemonic": "std", "op_str": "VAR{upper_ssm_lights}" },
+        { "mnemonic": "ldx", "op_str": "REF{str_initialize}" },
+        { "mnemonic": "jsr", "op_str": "FN{set_upper_screen_buffer}" },
+        { "mnemonic": "jsr", "op_str": "FN{print_upper_screen}" }
+      ]
+    },
+    {
       "name": "wait_ms",
       "pattern": [
         { "mnemonic": "pshx" },
@@ -28,11 +38,11 @@
     },
     {
       "name": "select_system",
-      "depends_on": ["wait_ms"],
+      "depends_on": ["wait_ms", "initialize"],
       "pattern": [
         { "mnemonic": "ldx", "op_str": "REF{str_select_system}" },
-        { "mnemonic": "jsr", "op_str": "FN{set_upper_screen_buffer}" },
-        { "mnemonic": "jsr", "op_str": "FN{print_upper_screen}" },
+        { "mnemonic": "jsr", "op_str": "REF{set_upper_screen_buffer}" },
+        { "mnemonic": "jsr", "op_str": "REF{print_upper_screen}" },
         { "mnemonic": "ldaa", "op_str": "VAR{current_selected_device}" },
         { "max_skip": 13, "min_skip": [10] },
         { "mnemonic": "mul" },
@@ -488,9 +498,21 @@
         { "mnemonic": "jsr", "op_str": "FN{copy_to_lower_screen_buffer}" }
       ],
       "description": "IMPREZA96 @0xC15B: Copy to lower screen buffer unit"
+    },
+    {
+      "name": "print_sign",
+      "pattern": [
+        { "mnemonic": "ldx", "op_str": "REF{ssm_display_y1_x0}" },
+        { "mnemonic": "abx" },
+        { "mnemonic": "ldab", "op_str": 6 },
+        { "mnemonic": "ldaa", "op_str": "0x00" },
+        { "mnemonic": "cmpa", "op_str": "0x20" }
+      ],
+      "description": "IMPREZA96 @0xB7BA: Print plus or minus sign based on value"
     }
   ],
   "strings": {
-    "str_select_system": " SELECT SYSTEM  "
+    "str_select_system": " SELECT SYSTEM  ",
+    "str_initialize": " INITIALIZE     "
   }
 }

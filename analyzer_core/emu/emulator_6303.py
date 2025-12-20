@@ -334,6 +334,9 @@ class Emulator6303:
             if instr.address == 0x2CCF: # scaling_AC_MB_BLW
                 pass
 
+            if instr.address == 0x29E9: # scaling_AC_MB_MODEP
+                pass
+
             # TODO hier die steps auswerten?
             # TODO in eigene Log schmeißen direkt
 
