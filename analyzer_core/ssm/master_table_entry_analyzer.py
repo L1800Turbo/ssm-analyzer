@@ -201,7 +201,7 @@ class MasterTableEntryAnalyzer:
             disasm.disassemble_reachable(action_ptr, self.rom_cfg.instructions, self.rom_cfg.call_tree)
 
             pattern_detector = PatternDetector(self.rom_cfg)
-            action_fn_patterns = pattern_detector.detect_patterns(self.rom_cfg.instructions, "action_table_pointer_pattern")
+            action_fn_patterns = pattern_detector.detect_patterns(self.rom_cfg.instructions, "action_table_pointer_pattern", no_warnings=True)
             for action_fn_name, action_fn_addr in action_fn_patterns.items():
                 self.rom_cfg.add_function_address(action_fn_name, action_fn_addr)
                 self.rom_cfg.action_addresses.add(action_ptr)

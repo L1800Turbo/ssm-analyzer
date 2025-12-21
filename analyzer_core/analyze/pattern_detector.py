@@ -27,7 +27,7 @@ class PatternDetector:
 
         self.found_signatures = set()
 
-    def detect_patterns(self, instructions: dict[int, Instruction], pattern_group:str):
+    def detect_patterns(self, instructions: dict[int, Instruction], pattern_group:str, no_warnings = False) -> dict[str, int]:
         signatures = self.repo.get_patterns(pattern_group)
         #self.fn_patterns
 
@@ -127,7 +127,8 @@ class PatternDetector:
                     # TODO Anpassen: Nciht pauschal abbrechen, sondern den problematischen raus nehmen
                     #raise SignatureNotFound(f"Pattern {name} not found")
                     missing.remove(name)
-                    self.logger.error(f"Pattern {name} not found")
+                    if not no_warnings:
+                        self.logger.error(f"Pattern {name} not found")
         return this_found_signatures
 
     def __detect_current_pattern(self, name: str, instructions: List[Instruction], pattern: List[Dict[str, Any]]) -> Optional[Dict[str, Dict[str, int]]]:
@@ -144,12 +145,9 @@ class PatternDetector:
             search_pattern: dict[str,str|int|list[int]] = pattern[pattern_idx]
             cur_instr = instructions[instr_idx]
 
-            # TODO nur zum debuggen
-            # if cur_instr.address < 0xBD84:
-            #     instr_idx += 1
-            #     continue
-            if cur_instr.address == 0xC15B:
-                pass
+            # For debugging
+            # if cur_instr.address == 0xC15B:
+            #     pass
 
             # TODO: Er muss noch die passende Startadresse einlesen können, um nicht bei 0 anzufangen!
 
@@ -287,13 +285,7 @@ class PatternDetector:
                 refs_found[ref_name] = get_target_value(cur_instr)
 
                 if not ref_var or ref_var.address != get_target_value(cur_instr):
-                    #self.logger.debug(f"Reference {ref_name} in signature {name} does not match")
                     return None  # Reference doesn't match
-            #elif op_str == "None":
-            #    pass
-            #elif type(op_str) == int:
-            #    if int(op_str) == cur_instr.target_value:
-            #        pass
             elif to_int(op_str) == cur_instr.target_value:
                     pass
             else:
@@ -306,8 +298,6 @@ class PatternDetector:
         }
     
     def _parse_additional_vars(self, additional_vars:dict[str, str]) -> None:
-        #vars_found: Dict[str, int] = {}
-        #funcs_found: Dict[str, int] = {}
 
         def replace_ref(match:re.Match) -> str:
             ref_name = match.group(1)

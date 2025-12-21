@@ -74,8 +74,8 @@ class SsmActionScalingFunction(SsmActionHelper):
 
             pattern_detector = PatternDetector(self.rom_cfg)
             
-            # TODO Versucht noch mehrere zu finden und beschwert sich dann. Muss man noch anpassen
-            pattern_detector.detect_patterns(self.rom_cfg.instructions, "scaling_function_pattern")
+            # Fail silently here, as not every scaling function has already all known patterns
+            pattern_detector.detect_patterns(self.rom_cfg.instructions, "scaling_function_pattern", no_warnings=True)
     
     def _add_function_mocks(self):
         '''
@@ -295,19 +295,11 @@ class SsmActionScalingFunction(SsmActionHelper):
             subst_expression = LutHelper.substitute_lookup_tables(self.instr_parser.current_expr)
             subst_conditions = [LutHelper.substitute_lookup_tables(cond) for cond in self.instr_parser.conditions]
 
-            eq_pieces.append((subst_expression, sp.And(*subst_conditions)))
+            eq_pieces.append((subst_expression, sp.And(*subst_conditions))) # type: ignore
 
-            #possible_index_values.extend(self.instr_parser.get_index_values())
-
-            
 
         # TODO Das dauert ewig bei vielen Bedingungen -> Text-Luts AC
         final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
-
-        #print(f"Final Scaling Expression: {final_expr}", flush=True)
-
-        #self.final_expr = final_expr
-
 
         # Check if we are in Switches mode where we don't need a static scaling but the switch values
         # Switches are already handled in the mocks above
@@ -324,10 +316,6 @@ class SsmActionScalingFunction(SsmActionHelper):
 
             self._check_label_results(emulated_output, current_scaling)
             self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = current_scaling
-
-        # TODO hier eine Art Checker einbauen:
-        print(f"hier dann vergleichen mit {emulated_output}")
-        # Alle relevanten indizies einfügen, emulation laufen lassen und hinterher aus den Bildschirmwerten prüfen, ob die rauskommen, die erwartet werden
 
 
     def run_post_actions(self):
@@ -377,16 +365,9 @@ class SsmActionScalingFunction(SsmActionHelper):
                 return label
         
         for rx_value, (upper_line, lower_line) in emulated_output.items():
-            # First, check for a lookup table match and try to evaluate directly
-            # TODO und einheiten??
-            #if scaling_definition.lookup_tables is not None:
-            #    if lower_line.strip() in scaling_definition.lookup_tables.values():
-            #        continue
-
             label_result = get_label_result(self, lower_line, scaling_definition.lookup_tables is not None)
 
             # Evaluate the scaling expression for this rx_value
-            #expr = sp.sympify(scaling_definition.scaling)
             expr = scaling_definition.scaling
             # Replace x1 with rx_value (and currently every other free symbol as well)
             calc_value = None
@@ -423,13 +404,6 @@ class SsmActionScalingFunction(SsmActionHelper):
                 else:
                     # Use ROUND_HALF_DOWN for negative numbers (-0.25 -> 0.2...)
                     calc_value = d.quantize(quant, rounding=ROUND_HALF_DOWN)
-
-                # Use ROUND_HALF_DOWN, as it matches the SSM behavior better (0.25 -> 0.3...)
-                #calc_value = Decimal(str(sp.N(calc_value))).quantize(quant, rounding=ROUND_HALF_DOWN)
-                #calc_value = round(float(calc_value), scaling_definition.precision_decimals)
-                # factor = 10 ** scaling_definition.precision_decimals
-                # # Use sympy's nsimplify to round towards zero (truncate), not floor
-                # calc_value = sp.nsimplify(int(calc_value * factor) / factor, rational=True)
 
             if sp.Float(calc_value) != label_result:
                 if label_result == 0 and sp.Abs(calc_value) <= sp.Float(0.1):
