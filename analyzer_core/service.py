@@ -7,28 +7,32 @@ import struct
 from typing import List, Optional, Tuple
 from analyzer_core.analyze.ssm_function_emulator import SsmFunctionEmulator
 from analyzer_core.analyze.string_finder import RomStringFinder
+from analyzer_core.config.memory_map import MemoryMap
+from analyzer_core.config.ssm_model import CurrentSelectedDevice
 from analyzer_core.data.rom_image import RomImage
 from analyzer_core.config.rom_config import RomConfig
 from analyzer_core.emu.emulator_6303 import Emulator6303
+from analyzer_core.emu.hooks import HookManager
+from analyzer_core.emu.memory_manager import MemoryManager
 from analyzer_core.emu.tracing import MemAccess
 
 #from analyzer_core.discovery import RomDiscoveryService
 #from analyzer_core.catalog import RomCatalog
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.analyze.repo import PatternRepository
-from analyzer_core.pipeline import AnalysisPipeline
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.disasm.insn_model import Instruction
 
 class RomService:
-    def __init__(self):
+    def __init__(self, image_file: Path):
         self.logger = logging.getLogger(__name__)
         self.rom_cfg = RomConfig()
+        self.rom_image = RomImage(image_file)
 
     # TODO Ruft noch keiner auf gerade -> Hier könnte die Analyse-Pipeline integriert werden
-    def analyze(self, rom_image: RomImage):
+    def analyze(self):
 
-        self.rom_cfg.instructions, self.rom_cfg.call_tree = self.disassemble_from_reset(rom_image)
+        self.rom_cfg.instructions, self.rom_cfg.call_tree = self.disassemble_from_reset(self.rom_image)
 
         # Adjust stack pointer if found
         stack_pointers = Disassembler630x.find_stackpointer(self.rom_cfg.instructions)
@@ -39,12 +43,11 @@ class RomService:
             raise NotImplementedError("Only one stack pointer definition is currently supported")
             
 
-
         # Get pattern repository TODO festen Pfad ändern
         self.rom_cfg.pattern_repo = PatternRepository(Path("./ressources/rom_patterns.json"))
 
         # Collect strings from ROM
-        string_finder = RomStringFinder(rom_image, self.rom_cfg.pattern_repo, self.rom_cfg)
+        string_finder = RomStringFinder(self.rom_image, self.rom_cfg.pattern_repo, self.rom_cfg, CurrentSelectedDevice.UNDEFINED)
         string_finder.find_string_references()
         
         # Detect assembly patterns from by Reset reachable functions
@@ -57,12 +60,12 @@ class RomService:
         master_table_workers = []
         for i in range(worker_function_count):
             offset = self.rom_cfg.address_by_name("master_table_worker_functions_ptr") + i * 2 # 16bit
-            ptr_bytes = rom_image.rom[offset:offset+2]
+            ptr_bytes = self.rom_image.rom[offset:offset+2]
             master_table_workers.append(struct.unpack(">H", ptr_bytes)[0])
 
         self.disassemble_from_pointer_list(
             start_addresses=master_table_workers,
-            rom_image=rom_image,
+            rom_image=self.rom_image,
             instructions=self.rom_cfg.instructions,
             call_tree=self.rom_cfg.call_tree
             )
@@ -71,7 +74,9 @@ class RomService:
         pattern_detector.detect_patterns(self.rom_cfg.instructions, "master_table_pointer_pattern")
 
         # Emulate functions to extract information
-        ssm_fn_emu = SsmFunctionEmulator(rom_image, self.rom_cfg)
+        ssm_fn_emu = SsmFunctionEmulator(self.rom_image, self.rom_cfg)
+
+        # TODO Das wieder aktivieren, wenn die GUI läuft
         ssm_fn_emu.run_ssm_functions()
 
         
@@ -103,7 +108,8 @@ class RomService:
         """
         Disassembliert nur tatsächlich erreichbaren Code ab Reset-Vektor und JSR/JMP-Zielen (rekursiv).
         """
-        disasm = Disassembler630x(rom_image.rom)
+        mem = MemoryManager(MemoryMap(), rom_image)
+        disasm = Disassembler630x(mem, self.rom_cfg)
 
         # Start fresh instruction and call tree lists
         instructions: dict[int, Instruction] = {}
@@ -121,43 +127,42 @@ class RomService:
         '''
         Disassemble code by a given list of addresses which work as a pointer
         '''
-        disasm = Disassembler630x(rom_image.rom)
-
+        mem = MemoryManager(MemoryMap(), rom_image)
+        disasm = Disassembler630x(mem, self.rom_cfg)
 
         for start_addr in start_addresses:
-            new_instructions, new_call_tree = disasm.disassemble_reachable(start_addr, instructions, call_tree)
-        
-        return instructions, call_tree
+            disasm.disassemble_reachable(start_addr, instructions, call_tree)
 
 
 
-    def init_emulator(self, rom_image: RomImage) -> None:
-        """Initialize the emulator."""
-        self.logger.info("Initializing emulator.")
-        self.emulator = Emulator6303(rom_image=rom_image, rom_config=self.rom_cfg)
 
-        # TODO Nur als Test
+    # def init_emulator(self, rom_image: RomImage) -> None:
+    #     """Initialize the emulator."""
+    #     self.logger.info("Initializing emulator.")
+    #     self.emulator = Emulator6303(rom_image=rom_image, rom_config=self.rom_cfg, current_device=)
+
+    #     # TODO Nur als Test
 
 
     
-    def step_from_address(self, addr: int) -> Optional[MemAccess]:
-        """Execute code from a specific address."""
-        if self.emulator is None:
-            self.logger.warning("Emulator not initialized.")
-            return None
+    # def step_from_address(self, addr: int) -> Optional[MemAccess]:
+    #     """Execute code from a specific address."""
+    #     if self.emulator is None:
+    #         self.logger.warning("Emulator not initialized.")
+    #         return None
         
-        self.logger.info(f"Executing code from address: {addr:#04x}")
-        self.emulator.set_pc(addr)
-        #self.emulator.run_function_end()
-        return self.emulator.step()
+    #     self.logger.info(f"Executing code from address: {addr:#04x}")
+    #     self.emulator.set_pc(addr)
+    #     #self.emulator.run_function_end()
+    #     return self.emulator.step()
 
-    def run_to_function_end(self, addr: int) -> Optional[MemAccess]:
-        """Run the emulator until the end of the current function."""
-        if self.emulator is None:
-            self.logger.warning("Emulator not initialized.")
-            return None
+    # def run_to_function_end(self, addr: int) -> Optional[MemAccess]:
+    #     """Run the emulator until the end of the current function."""
+    #     if self.emulator is None:
+    #         self.logger.warning("Emulator not initialized.")
+    #         return None
 
-        self.logger.info("Running emulator to function end.")
-        self.emulator.set_pc(addr)
-        return self.emulator.run_function_end()
+    #     self.logger.info("Running emulator to function end.")
+    #     self.emulator.set_pc(addr)
+    #     return self.emulator.run_function_end()
         

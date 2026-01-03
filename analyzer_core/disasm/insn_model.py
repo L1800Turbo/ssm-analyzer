@@ -2,6 +2,8 @@
 from dataclasses import dataclass
 from typing import Optional
 
+from analyzer_core.config.ssm_model import CurrentSelectedDevice
+
 #from analyzer_core.disasm.capstone_wrap import OperandType
 
 INSTRUCTION_GROUPS = {
@@ -20,7 +22,7 @@ class Instruction:
     bytes: bytes
     mnemonic: str
     op_str: str
-    target_type: Optional["OperandType"] = None  # Type of the operand (immediate, direct, etc.)
+    target_type: Optional["OperandType"] = None  # type: ignore -> Type of the operand (immediate, direct, etc.)
     target_value: Optional[int] = None
 
     def __repr__(self):

@@ -33,11 +33,11 @@ class MemoryMap:
     # TODO in config?
     def get_default_ssm_values(self):
         return [
-                MemoryRegion(start=0x0000, end=0x1FFF, kind=RegionKind.RAM, name="RAM"),               # 8 KB RAM
+                MemoryRegion(start=0x0000, end=0x001F, kind=RegionKind.IO, name="INTERNAL_IO"),        # 32 Bytes Internal IO
+                MemoryRegion(start=0x0020, end=0x1FFF, kind=RegionKind.RAM, name="RAM"),               # 8 KB RAM
                 MemoryRegion(start=0x2000, end=0x3FFF, kind=RegionKind.MAPPED_ROM, name="MAPPED_ROM"), # 8 KB Mapped ROM from 0x2000, needs to be attached first
+                MemoryRegion(start=0x4000, end=0x7FFF, kind=RegionKind.IO, name="EXTERNAL_IO"),        # 16 KB IO from 0x4000
                 MemoryRegion(start=0x8000, end=0xFFFF, kind=RegionKind.ROM, name="ROM"),               # 32 KB ROM from 0x8000
-                
-                # Optional: IO, TODO
             ]
 
     @classmethod
@@ -57,11 +57,15 @@ class MemoryMap:
             ))
         return cls(regions)
 
-    def region_lookup(self, address: int) -> Optional[MemoryRegion]:
+    def region_lookup(self, address: int) -> MemoryRegion:
         for region in self.regions:
             if region.contains(address):
                 return region
-        return None
+        raise ValueError(f"Address 0x{address:04X} not in any defined memory region")
+    
+    def in_mapped_rom(self, address: int) -> bool:
+        region = self.region_lookup(address)
+        return region.kind == RegionKind.MAPPED_ROM
 
     def regions_by_kind(self, kind: RegionKind) -> List[MemoryRegion]:
         return self._by_kind.get(kind, [])

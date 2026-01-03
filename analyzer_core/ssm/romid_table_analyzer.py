@@ -74,6 +74,8 @@ class RomIdTableAnalyzer:
          - Save pointer to RAM
          - attach_cu_specific_addresses -> read back pointers/limits
         Erwartet, dass self.emulator bereits die richtige Memory-Mapping / Umgebung hat.
+
+        TODO warum rom_cfg übergeben, ist doch self.rom_cfg?
         """
 
         for entry in self.table.entries:
@@ -104,8 +106,10 @@ class RomIdTableAnalyzer:
             entry_analyzer.run_attach_cu_specific_addresses()
 
             # TODO Für Debuggen und schneller suchen
-            if entry.print_romid_str() != "74 BD 00" and entry.print_romid_str() != "71 93 00":  # 76 5D B0  71 93 00
-               return
+            #if entry.print_romid_str() != "74 BD 00" and entry.print_romid_str() != "71 93 00":  # 76 5D B0  71 93 00
+            #   return
+            #if current_device != CurrentSelectedDevice.TCS:
+            #    continue 
 
 
             # Create MasterTable analyzer for this entry (done by caller or here)

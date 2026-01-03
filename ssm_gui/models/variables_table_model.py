@@ -42,7 +42,7 @@ class VariableTableModel(QAbstractTableModel):
             if col == 0:
                 return f.name
             if col == 1:
-                return f"0x{f.address:04X}"
+                return f"0x{f.rom_address:04X}"
         if role == Qt.ItemDataRole.TextAlignmentRole and col == 1:
             return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         return QVariant()

@@ -8,8 +8,9 @@ import re
 from typing import List, Dict, Any, Optional
 
 from analyzer_core.config.rom_config import RomConfig
+from analyzer_core.config.ssm_model import CurrentSelectedDevice
 from analyzer_core.disasm.insn_model import Instruction
-from .repo import PatternRepository
+
 
 class SignatureError(Exception):
     pass
@@ -18,12 +19,13 @@ class SignatureNotFound(Exception):
     pass
 
 class PatternDetector:
-    def __init__(self, rom_cfg: RomConfig):
+    def __init__(self, rom_cfg: RomConfig, current_device: Optional[CurrentSelectedDevice] = None) -> None:
         self.logger = logging.getLogger(__name__)
 
         self.repo = rom_cfg.pattern_repo
         #self.fn_patterns = repo.get_fn_patterns()
         self.rom_cfg = rom_cfg
+        self.current_device = current_device
 
         self.found_signatures = set()
 
@@ -68,9 +70,10 @@ class PatternDetector:
                     raise SignatureError(f"Signature {name} doesn't contain a pattern")
                 pattern = sig["pattern"]
 
-                # Build an ordered list view from the instructions dict (do not modify original)
-                ordered_addrs = sorted(instructions.keys())
-                instr_list = [instructions[a] for a in ordered_addrs]
+                # Build an ordered list view from the instructions dict (do not modify original) 
+                # TODO ist das so nicht ineffizient? Der sollte nicht jedes ml alle instructions geben und sortiern?
+                ordered_device_addrs = sorted(instructions.keys())
+                instr_list = [instructions[a] for a in ordered_device_addrs]
 
                 # When using a start_address, we skip until that point
                 start_address = sig.get("start_address", None)
@@ -80,10 +83,10 @@ class PatternDetector:
                             ref_name = start_address[4:-1]
                             ref_var = self.rom_cfg.get_by_name(ref_name)
                             
-                            if ref_var is None or ref_var.address is None:
+                            if ref_var is None or ref_var.rom_address is None:
                                 raise SignatureError(f"Reference {ref_name} in Config for signature {name} not found")
                             
-                            start_address = ref_var.address
+                            start_address = ref_var.rom_address
                         else:
                             start_address = int(start_address)
                     elif type(start_address) != int:
@@ -105,10 +108,20 @@ class PatternDetector:
                     this_found_signatures[name] = pattern_match['funcs'][name]
 
                     for varname, addr in pattern_match.get("vars", {}).items():
-                        self.rom_cfg.add_var_address(varname, addr)
+                        self.rom_cfg.add_var_address(
+                            name=varname, 
+                            address=addr, 
+                            current_device=self.current_device if self.current_device is not None else CurrentSelectedDevice.UNDEFINED)
                     for funcname, addr in pattern_match.get("funcs", {}).items():
-                        self.rom_cfg.add_function_address(funcname, addr)
-                
+                        # Pattern detector should be able to rename functions as they'd be named fn_xxxx by default
+                        self.rom_cfg.add_refresh_function(
+                            name=funcname, 
+                            rom_address=addr, 
+                            current_device=self.current_device if self.current_device is not None else CurrentSelectedDevice.UNDEFINED,
+                            rename=True
+                        )
+                    
+                    
                     # After setting the addresses
                     # Check for additional variable/function definition and add it
                     additional_vars_list = sig.get("additional_vars", None)
@@ -241,10 +254,10 @@ class PatternDetector:
         funcs_found: Dict[str, int] = {}
         refs_found: Dict[str, int] = {}
 
-        def get_target_value(instr: Instruction) -> int:
+        def get_target_rom_value(instr: Instruction) -> int:
             if cur_instr.target_value is None:
                     raise SignatureError(f"Function {fn_name} in signature {name} has no target value in assembly.")
-            return cur_instr.target_value
+            return self.rom_cfg.get_mapped_address(cur_instr.target_value, self.current_device if self.current_device is not None else CurrentSelectedDevice.UNDEFINED)
         
         def to_int(value):
             if isinstance(value, int):
@@ -272,19 +285,19 @@ class PatternDetector:
             if str(op_str).startswith("VAR{"):
                 var_name = op_str[4:-1]
                 #self.rom_cfg.add_var_address(var_name, get_target_value(cur_instr))
-                vars_found[var_name] = get_target_value(cur_instr)
+                vars_found[var_name] = get_target_rom_value(cur_instr)
             elif str(op_str).startswith("FN{"):
                 fn_name = op_str[3:-1]
                 #self.rom_cfg.add_function_address(fn_name, get_target_value(cur_instr))
-                funcs_found[fn_name] = get_target_value(cur_instr)
+                funcs_found[fn_name] = get_target_rom_value(cur_instr)
             elif str(op_str).startswith("REF{"):
                 ref_name = op_str[4:-1]
                 ref_var = self.rom_cfg.get_by_name(ref_name)
                 if ref_var is None:
                     raise SignatureError(f"Reference {ref_name} in Config for signature {name} not found")
-                refs_found[ref_name] = get_target_value(cur_instr)
+                refs_found[ref_name] = get_target_rom_value(cur_instr)
 
-                if not ref_var or ref_var.address != get_target_value(cur_instr):
+                if not ref_var or ref_var.rom_address != get_target_rom_value(cur_instr):
                     return None  # Reference doesn't match
             elif to_int(op_str) == cur_instr.target_value:
                     pass
@@ -304,7 +317,7 @@ class PatternDetector:
             ref_var = self.rom_cfg.get_by_name(ref_name)
             if not ref_var:
                 raise SignatureError(f"Reference {ref_name} in Config not found")
-            return str(ref_var.address)
+            return str(ref_var.rom_address)
 
         for var_name_ref, var_address_ref in additional_vars.items():
             if str(var_name_ref).startswith("VAR{"):
@@ -312,7 +325,7 @@ class PatternDetector:
                 var_address_calc = re.sub(r"REF\{(.*?)\}", replace_ref, var_address_ref)
 
                 # TODO für Eval auch später die Adressbereiche prüfen
-                self.rom_cfg.add_var_address(var_name, eval(var_address_calc))
+                self.rom_cfg.add_var_address(var_name, eval(var_address_calc), current_device=self.current_device if self.current_device is not None else CurrentSelectedDevice.UNDEFINED)
                 #vars_found[var_name] = eval(var_address_calc)
             else:
                 raise NotImplementedError("Only VAR{...} is implemented so far...")

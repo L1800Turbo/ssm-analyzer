@@ -24,12 +24,6 @@ class SsmTablesWidget(QWidget):
         self.logger = logging.getLogger(f"{__name__}")
 
         self.rom_services = rom_services
-        #self.romid_tables = getattr(rom_service, "romid_tables", {})
-
-
-        #layout = QVBoxLayout()
-        #layout.addWidget(QLabel("ROM Catalog (Meta, Functions, Strings, Export/CSV)"))
-        #self.setLayout(layout)
 
         self.__create_ui()
 

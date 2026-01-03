@@ -1,5 +1,6 @@
 from typing import Iterable, Optional, Tuple
 from analyzer_core.config.memory_map import MemoryMap, MemoryRegion, RegionKind
+from analyzer_core.config.ssm_model import CurrentSelectedDevice
 from analyzer_core.data.rom_image import RomImage
 from analyzer_core.emu.hooks import HookManager
 from analyzer_core.emu.ram import Ram
@@ -38,9 +39,8 @@ class MemoryManager:
         if self.hooks:
             self.hooks.run_read_hooks(address, value, self)
 
-        if region.kind == RegionKind.RAM:
+        if region.kind == RegionKind.RAM or region.kind == RegionKind.IO:
             value = self.ram.read8(address - region.start)
-            # TODO Warnung, wenn die RAM-Stelle nicht initialisiert ist!
         elif region.kind == RegionKind.ROM:
             # ROM is being read without any offset as it's the original ROM file
             value = self.rom_image.rom[address]
@@ -49,13 +49,13 @@ class MemoryManager:
             if self.mapped_rom_offset is None:
                 raise MemoryError(f"Mapped memory offset for access to {address:#04X} is not defined! Define it first.")
             value = self.rom_image.rom[address + self.mapped_rom_offset]
-        elif region.kind == RegionKind.IO:
-            # IO access could be handled by hooks/mocks TODO macht das so überhaupt Sinn?
-            if self.hooks and self.hooks.run_read_hooks(address, 0, self):
-                print("TODO: IO read hook handled value...")
-                value = 0  # Default/mock value
-            else:
-                raise NotImplementedError("IO region access not implemented.")
+        # elif region.kind == RegionKind.IO:
+        #     # IO access could be handled by hooks/mocks TODO macht das so überhaupt Sinn?
+        #     if self.hooks and self.hooks.run_read_hooks(address, 0, self):
+        #         print("TODO: IO read hook handled value...")
+        #         value = 0  # Default/mock value
+        #     else:
+        #         raise NotImplementedError("IO region access not implemented.")
         else:
             raise ValueError(f"Unknown region kind: {region.kind}")
         
@@ -70,16 +70,10 @@ class MemoryManager:
         region = self.memory_map.region_lookup(address)
         if not region:
             raise ValueError(f"Address 0x{address:04X} not mapped to any region.")
-            
-        if region.kind == RegionKind.RAM:
+        
+        # Accept IO to be written like RAM for now
+        if region.kind == RegionKind.RAM or region.kind == RegionKind.IO:
             self.ram.write8(address - region.start, value)
-        elif region.kind == RegionKind.IO:
-            # IO access could be handled by hooks/mocks
-            # TODO noch anders
-            if self.hooks:
-                self.hooks.run_write_hooks(address, value, self)
-            else:
-                raise NotImplementedError("IO region write not implemented.") # TODO Generell die Frage: IOs haben auch den RAM-Bereich?
         elif region.kind in (RegionKind.ROM, RegionKind.MAPPED_ROM):
             raise PermissionError(f"Cannot write to ROM or MAPPED_ROM region at 0x{address:04X}.")
         else:
@@ -100,26 +94,6 @@ class MemoryManager:
     def get_written_memory_addresses(self):
         return self.__written_memory
 
-    # def __add_default_values(self):
-    #     """
-    #     Setzt typische Default-Werte für HD6303 (Stack Pointer etc.) in den RAM.
-    #     """
-    #     # Beispiel: Initial Stack Pointer Value und weitere Defaults
-    #     # Annahme: RAM beginnt bei 0x0000
-    #     # 0x01FF: Stack Pointer
-    #     # 0x0200, 0x0201: weitere Initialwerte
-    #     # Die Adressen werden auf RAM-Offset gemappt
-    #     mapping = {
-    #         0x01FF: 0xFF,
-    #         0x0200: 0x00,
-    #         0x0201: 0x00,
-    #     }
-    #     for addr, value in mapping.items():
-    #         region = self.memory_map.region_lookup(addr)
-    #         if region and region.kind == RegionKind.RAM:
-    #             self.ram[addr - region.start] = value & 0xFF
-
-    
 
     def read_bytes(self, address: int, length: int, *, allow_cross_region: bool = False, allow_hooks = True) -> bytes:
         """
@@ -147,7 +121,7 @@ class MemoryManager:
                     "Set allow_cross_region=True if this is intentional."
                 )
             view = self._slice_from_region(region, address, length)
-            data = bytes(view)  # Kopie als immutable bytes (API-freundlich)
+            data = bytes(view)  
         else:
             # regionsübergreifend segmentieren
             segments = list(self._split_by_region(address, length))
@@ -175,6 +149,7 @@ class MemoryManager:
         Liest Bytes direkt in einen bereitgestellten Puffer (vermeidet zusätzliche Allokation).
         Gibt die Anzahl der geschriebenen Bytes zurück.
         """
+        # TODO nutzt das wer?
         length = len(out_buffer)
         if length == 0:
             return 0
@@ -206,6 +181,20 @@ class MemoryManager:
 
         self.__read_memory.update(range(address, address + length))
         return length
+    
+    # TODO Jetzt doppelt, gibt es schon in rom_config
+    def get_original_address(self, address: int, current_device: CurrentSelectedDevice) -> int:
+        '''
+        Return the original ROM address for a given memory address, considering mapped regions.
+        '''
+
+        if self.memory_map.in_mapped_rom(address):
+            if self.mapped_rom_offset is None:
+                raise MemoryError(f"Mapped memory offset for access to 0x{address:04X} is not defined! Define it first.")
+            return address - self.mapped_rom_offset
+        
+        return address
+
 
     # --------- Interne Helfer ---------
 

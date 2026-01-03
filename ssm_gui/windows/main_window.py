@@ -2,7 +2,7 @@
 # Tab-based: Assembly, ROM import/info, General Config
 
 import logging
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QStatusBar, QMenuBar, QMenu, QFileDialog, QTextEdit
+from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QStatusBar, QMenuBar, QMenu, QFileDialog, QTextEdit, QHBoxLayout, QLabel, QComboBox, QPushButton
 from PyQt6.QtGui import QAction
 from ssm_gui.widgets.asm_viewer import AsmViewerWidget
 from ssm_gui.widgets.rom_catalog import RomCatalogWidget
@@ -60,10 +60,23 @@ class MainWindow(QMainWindow):
         self.main_vertical_layout = QVBoxLayout(self.central_widget)
         self.setCentralWidget(self.central_widget)
 
+        # Top bar: ROM selection
+        top_bar = QHBoxLayout()
+        self.rom_select = QComboBox()
+        self.rom_select.setMinimumWidth(220)
+        top_bar.addWidget(QLabel("Select ROM image:"))
+        top_bar.addWidget(self.rom_select)
+
+        self.load_button = QPushButton("Load current ROM file") # Todo später analyze oder load nennen, je nachdem ob schon analysiert
+        self.load_button.clicked.connect(self.__on_load_rom_file)
+        top_bar.addWidget(self.load_button)
+        top_bar.addStretch(1)
+        self.main_vertical_layout.addLayout(top_bar)
+
         # Tabs
         self.tabs = QTabWidget()
         self.main_vertical_layout.addWidget(self.tabs)
-        self.asm_viewer = AsmViewerWidget(self.rom_services)
+        self.asm_viewer = AsmViewerWidget()
         self.tabs.addTab(self.asm_viewer, "Analysis")
         self.rom_catalog = RomCatalogWidget(self.rom_services)
         self.tabs.addTab(self.rom_catalog, "ROM Import/Info")
@@ -71,8 +84,8 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.ssm_tables, "SSM tables")
 
         # Refresh info about analyzed roms
-        self.asm_viewer.roms_updated.connect(self.rom_catalog._refresh_rom_info_tree)
-        self.asm_viewer.roms_updated.connect(self.ssm_tables.refresh_romid_table)
+        #self.asm_viewer.roms_updated.connect(self.rom_catalog._refresh_rom_info_tree)
+        #self.asm_viewer.roms_updated.connect(self.ssm_tables.refresh_romid_table)
 
         # Log area
         self.log_area = QTextEdit()
@@ -116,4 +129,31 @@ class MainWindow(QMainWindow):
 
         # Load ROM list from selected folder and update ASM viewer
         rom_paths = RomService.list_roms(Path(self.current_rom_folder))
-        self.asm_viewer.set_rom_list(rom_paths)
+
+        # Create RomService instances for each ROM and show on dropdown
+        self.rom_select.clear()
+        for rom_path in rom_paths:
+            service = RomService(rom_path)
+            self.rom_select.addItem(service.rom_image.file_name, rom_path)
+
+            self.rom_services[rom_path] = service
+    
+    def __on_load_rom_file(self) -> None:
+        """Handles loading and analyzing the currently selected ROM file."""
+
+
+        # TODO: Abfrage einbauen if not analyzed yet, analyze
+        current_service: RomService = self.rom_services[self.rom_select.currentData()]
+
+        current_service.analyze()
+
+        self.asm_viewer.set_rom_service(current_service)
+        self.asm_viewer.build_current_rom_ui()
+
+        # Refresh info tree with ROM information
+        # TODO hier auch set_rom_service machen?
+        self.rom_catalog.refresh_rom_info_tree()
+
+        # Refresh SSM tables
+        self.ssm_tables.refresh_romid_table()
+

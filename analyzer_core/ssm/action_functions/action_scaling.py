@@ -69,13 +69,14 @@ class SsmActionScalingFunction(SsmActionHelper):
         # TODO: Der muss das vom Memory lesen den Pointer, damit der Adressoffset passt!, aber nicht direkt, nur der Offset
 
         if self.scaling_fn_ptr not in self.rom_cfg.scaling_addresses: # TODO erst wird hier nur nach der scaling_Address geguckt, aber nirgednwo hinzugefügt
-            disasm = Disassembler630x(mem=self.emulator.mem) # TODO Besser raussuchen? self.emulator.mem.rom_image.rom)
+            disasm = Disassembler630x(mem=self.emulator.mem, rom_config=self.rom_cfg, current_device=self.current_device)
             disasm.disassemble_reachable(self.scaling_fn_ptr, self.rom_cfg.instructions, self.rom_cfg.call_tree)
 
             pattern_detector = PatternDetector(self.rom_cfg)
             
             # Fail silently here, as not every scaling function has already all known patterns
             pattern_detector.detect_patterns(self.rom_cfg.instructions, "scaling_function_pattern", no_warnings=True)
+
     
     def _add_function_mocks(self):
         '''
@@ -230,6 +231,7 @@ class SsmActionScalingFunction(SsmActionHelper):
         if self.scaling_fn_ptr in self.rom_cfg.scaling_addresses:
             logger.debug(f"Scaling function at 0x{self.scaling_fn_ptr:04X} already known, skipping emulation.")
             if self.mt_entry.item_label:
+                # TODO: Mapped adresse dann?? Sollte besser Rom sein
                 self.rom_cfg.scaling_addresses[self.scaling_fn_ptr].functions.append(self.mt_entry.item_label)
             else:
                 logger.warning(f"Scaling function at 0x{self.scaling_fn_ptr:04X} has no item label.")
@@ -242,7 +244,7 @@ class SsmActionScalingFunction(SsmActionHelper):
             while self.rom_cfg.check_for_name(f"{fn_label_proto}_{counter}"):
                 counter += 1
             fn_label = f"{fn_label_proto}_{counter}"
-            self.rom_cfg.add_function_address(fn_label, self.scaling_fn_ptr)
+            self.rom_cfg.add_refresh_mapped_function(name=fn_label, mapped_address=self.scaling_fn_ptr, current_device=self.current_device)
         
         decimal_places: int = -1
         
@@ -278,8 +280,10 @@ class SsmActionScalingFunction(SsmActionHelper):
                 logger.warning(f"Different decimal places detected during scaling function emulation: previous {decimal_places}, current {current_decimal_places}. Using maximum.")
                 decimal_places = max(decimal_places, current_decimal_places)
 
-            if self.emulator.mem.read(self.rom_cfg.address_by_name('print_-_sign')) == 1:
-                self.instr_parser.negate_current_expression()
+            self.instr_parser.negate_current_expression_if_negative()
+
+            #if self.emulator.mem.read(self.rom_cfg.address_by_name('print_-_sign')) == 1:
+            #    self.instr_parser.negate_current_expression_if_negative()
 
             # To check the calculation afterwards, collect the display output from this run
             upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, self.emulator, 'ssm_display_y0_x0')
@@ -357,7 +361,11 @@ class SsmActionScalingFunction(SsmActionHelper):
                 else:
                     raise ValueError("Unit is set but label does not end with it.")
             
-            # Check if we convert the label to an integer
+
+            if type(label) == str:
+                return label
+            
+            # Check if we convert the label to a number
             try:
                 return float(label)
             except ValueError:
@@ -372,7 +380,7 @@ class SsmActionScalingFunction(SsmActionHelper):
             # Replace x1 with rx_value (and currently every other free symbol as well)
             calc_value = None
             for sym in expr.free_symbols:
-                calc_value = expr.subs(sym, rx_value)
+                calc_value = expr.subs(sym, rx_value) # TODO so ist noch Müll...
             
             #TODO oder
             #calc_value = expr.subs({"x1": rx_value})
@@ -397,17 +405,22 @@ class SsmActionScalingFunction(SsmActionHelper):
                 quant = Decimal("1").scaleb(-scaling_definition.precision_decimals)
                 d = Decimal(str(sp.N(calc_value)))
 
+                calc_value = d.quantize(quant, rounding=ROUND_HALF_UP)
+
                 # Workaround for positive/negative numbers, as SSM software seems to round them differently
-                if d >= 0:
-                    # Use ROUND_HALF_UP for positive numbers (0.25 -> 0.3...)
-                    calc_value = d.quantize(quant, rounding=ROUND_HALF_UP)
-                else:
-                    # Use ROUND_HALF_DOWN for negative numbers (-0.25 -> 0.2...)
-                    calc_value = d.quantize(quant, rounding=ROUND_HALF_DOWN)
+                # if d >= 0:
+                #     # Use ROUND_HALF_UP for positive numbers (0.25 -> 0.3...)
+                #     calc_value = d.quantize(quant, rounding=ROUND_HALF_UP)
+                # else:
+                #     # Use ROUND_HALF_DOWN for negative numbers (-0.25 -> 0.2...)
+                #     calc_value = d.quantize(quant, rounding=ROUND_HALF_DOWN)
+            else:
+                quant = Decimal("1")
 
             if sp.Float(calc_value) != label_result:
-                if label_result == 0 and sp.Abs(calc_value) <= sp.Float(0.1):
-                    # Workaround around 0 for rounding issues
+                #if label_result == 0 and sp.Abs(calc_value) <= sp.Float(0.1):
+                if (Decimal(label_result) - calc_value).quantize(quant) <= quant: # type: ignore
+                    # Workaround for rounding issues
                     logger.warning(f"Calculated value '{calc_value}' at 0x{scaling_definition.scaling_address_pointer:04X} for RX value {rx_value}"
                                    f" differs slightly from expected label '{label_result}'. Accepting due to rounding from decimal places.")
                 else:

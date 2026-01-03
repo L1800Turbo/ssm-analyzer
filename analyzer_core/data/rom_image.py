@@ -15,6 +15,11 @@ class RomImage:
 
         self.logger = logging.getLogger(f"{__name__}_{self.file_name}")
 
+    def contents(self) -> bytes:
+        '''
+        Return the full contents of the ROM image.
+        '''
+        return self.rom
 
     def reset_vector(self) -> int:
         '''

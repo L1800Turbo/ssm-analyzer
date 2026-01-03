@@ -75,14 +75,13 @@ class CalcInstructionParser:
         self.mock_function_ptrs: dict[int, Callable[[MemAccess], None]] = {}
         for fn_name, func in mock_function_names.items():
             addr_def = self.rom_cfg.get_by_name(fn_name)
-            if addr_def is not None and addr_def.address is not None:
-                self.mock_function_ptrs[addr_def.address] = func
+            if addr_def is not None and addr_def.rom_address is not None:
+                self.mock_function_ptrs[addr_def.rom_address] = func
 
 
 
         # TODO Hardcoded auf eins zunächjst
         self.symbol = sp.Symbol("x1", real = True)
-        self.neg_flag_val = 0
 
         # How many lookup tables were found in all function runs
         self.found_luts : int = 0
@@ -97,11 +96,15 @@ class CalcInstructionParser:
         self.last_tested_expr: Optional[sp.Expr] = None
         self.last_tested_value: Optional[int] = None
 
+        # If it's necessary to lock further calculation (e.g. after print_lower_screen_buffer)
+        self._lock_calculation: bool = False
+
         self.conditions: list[Relational] = []
         self.multi_step_complement: TwoStepComplement = TwoStepComplement.NONE
         self.multi_step_divide: TwoStepDivide = TwoStepDivide.NONE
         self.multi_step_divide_counter: int = 0
 
+        self.neg_flag_val = 0
 
         # Helpers for Lookup tables
         self.lut_access = LookupTableAccess()
@@ -156,6 +159,10 @@ class CalcInstructionParser:
             # Only count up JSR levels, don't parse inside functions
             if instr.is_function_call:
                 self.jsr_level += 1
+            return
+        
+        # If calculation is locked, skip further processing
+        if self._lock_calculation:
             return
         
         old_multi_step_calc = self.multi_step_complement
@@ -261,7 +268,7 @@ class CalcInstructionParser:
     
         # If we didn't set them manually, extract them from the expression
         if factor is None or index_var is None:
-            factor, index_var = self._extract_factor_and_index(self.lut_access.lut_expr, factor)
+            factor, index_var = LookupTableHelper.extract_factor_and_index(self.symbol, self.current_expr, self.lut_access, factor)
 
         # Collect possible indexes, valid for THIS LUT only
         possible_idx_vals = self._get_possible_index_values(index_var)
@@ -288,7 +295,7 @@ class CalcInstructionParser:
             self.rom_cfg.lookup_tables[table_name] = lut
 
             # Also save the value to the known variables
-            self.rom_cfg.add_lut(table_name, self.lut_access.get_lut_address(), factor * max(possible_idx_vals))
+            self.rom_cfg.add_lut(table_name, self.lut_access.get_lut_address(), factor * max(possible_idx_vals), current_device=self.emulator.current_device)
             self.found_luts += 1
 
         self.raw_calculations.append(f"[{self.lut_access.lut_expr}] -> LUT(addr=0x{self.lut_access.get_lut_address():04X})")
@@ -348,32 +355,6 @@ class CalcInstructionParser:
                     solved_values.add(val)
      
         return solved_values
-    
-    
-        
-    def _extract_factor_and_index(self, expr: sp.Expr, factor: Optional[int] = None) -> tuple[int, sp.Basic]:
-        # If we got a factor delivered and there is no symbol, we use a fixed index, broken down by the factor
-        if factor is not None and not self.symbol in self.current_expr.free_symbols:
-            index_var = expr / sp.Integer(factor) # type: ignore
-            return factor, index_var
-
-        if isinstance(expr, sp.Mul):
-            factor = None
-            index_var = None
-            for arg in expr.args:
-                if arg.is_Number:
-                    factor = int(arg)
-                else:
-                    index_var = arg
-            if factor is not None and index_var is not None:
-                return factor, index_var
-        if isinstance(expr, sp.Mod):
-            return 1, expr
-        # Fallback für x1
-        vars = list(expr.free_symbols)
-        if len(vars) == 1 and expr.is_Symbol:
-            return 1, expr
-        raise NotImplementedError("Could not extract item size and index variable from LUT expression.")
 
     def _get_possible_index_values(self, index_var: sp.Basic) -> list[int]:
         # Modulo (fully bit masked values): Mod(x1, N)
@@ -392,11 +373,13 @@ class CalcInstructionParser:
         # Otherwise unknown
         raise NotImplementedError(f"Couldn't create index values out of {index_var}")
     
-    def negate_current_expression(self):
+    def negate_current_expression_if_negative(self):
         '''
-        Negate the current expression
+        Negate the current expression if it is negative
+
+        Must not check on 'print_-_sign' flag, this one will get cleaned on 0 values before!
         '''
-        if self.current_expr is not None:
+        if self.current_expr is not None and self.neg_flag_val == 1:
             self.current_expr = -self.current_expr
     
 
@@ -404,6 +387,38 @@ class CalcInstructionParser:
         if decimal_places > 0:
             self.raw_calculations.append(f" / {10 ** decimal_places}")
             self.current_expr = self.current_expr / (10 ** decimal_places) 
+    
+    @staticmethod
+    def _fast_simplify_condition(cond: sp.Expr) -> sp.Expr:
+        if not isinstance(cond, sp.And):
+            return cond
+
+        eq_val = None
+        new_args = []
+
+        for arg in cond.args:
+            if isinstance(arg, sp.Equality):
+                if eq_val is None:
+                    eq_val = arg.rhs
+                    new_args.append(arg)
+                else:
+                    # Eq(x, a) & Eq(x, b)
+                    return sp.false if arg.rhs != eq_val else arg # type: ignore
+            elif isinstance(arg, sp.Unequality):
+                if eq_val is not None:
+                    if arg.rhs == eq_val:
+                        return sp.false
+                    # Ne(x, b) ist redundant
+                else:
+                    new_args.append(arg)
+            else:
+                new_args.append(arg)
+
+        if eq_val is not None:
+            return sp.Eq(cond.args[0].lhs, eq_val) # type: ignore
+
+        return sp.And(*new_args) # type: ignore
+
 
 
     def finalize_simplify_equations(self, eq_pieces: list[tuple[sp.Expr | None, Boolean]]) -> sp.Expr:
@@ -418,21 +433,26 @@ class CalcInstructionParser:
         combined_equations: list[tuple[sp.Expr | None, sp.Expr]] = []
         #for expr, conds in grouped.items():
         for expr, conds in grouped.items():
-            condition = sp.Or(*conds)
+            symplified_conds = []
+            for cond in conds:
+                symplified_conds.append(self._fast_simplify_condition(cond)) # type: ignore
+            condition = sp.Or(*symplified_conds)
             #simplified_condition = sp.simplify(condition, force=True)
-            simplified_condition = sp.simplify(condition)
+            #simplified_condition = sp.simplify(condition)
+            #simplified_condition = sp.simplify_logic(condition)
+            simplified_condition = self._fast_simplify_condition(condition) # type: ignore
             
             combined_equations.append((expr, simplified_condition))
         
-        combined_equations = self.sort_combined_equations(combined_equations)
+        combined_equations = self._sort_combined_equations(combined_equations)
 
         final_expr_subst = sp.Piecewise(*combined_equations)
         
         # Get Lookup table objects back if included
-        return LookupTableHelper.reverse_substitute_lookup_tables(self.rom_cfg.lookup_tables, final_expr_subst) # type: ignore
+        return LookupTableHelper.reverse_substitute_lookup_tables(self.rom_cfg.lookup_tables, final_expr_subst, {str(self.symbol): self.symbol}) # type: ignore
     
 
-    def condition_priority(self, cond: sp.Expr) -> int:
+    def _condition_priority(self, cond: sp.Expr) -> int:
         """
         Get priority of a condition for sorting.
         Lower values have higher priority.
@@ -478,7 +498,7 @@ class CalcInstructionParser:
         return 2
     
 
-    def sort_combined_equations(self, combined_equations: list[tuple[sp.Expr | None, sp.Expr]]) \
+    def _sort_combined_equations(self, combined_equations: list[tuple[sp.Expr | None, sp.Expr]]) \
             -> list[tuple[sp.Expr | None, sp.Expr]]:
         """
         Sort (expr, cond) by cond according to condition_priority.
@@ -486,7 +506,7 @@ class CalcInstructionParser:
         def key(item):
             expr, cond = item
             # Tie-breaker: srepr(cond) ensures stable order within the same priority
-            return (self.condition_priority(cond), sp.srepr(cond))
+            return (self._condition_priority(cond), sp.srepr(cond))
         return sorted(combined_equations, key=key)
     
 
@@ -509,7 +529,7 @@ class CalcInstructionParser:
         else:
             self.calc_register_involed = False
     
-    def branch_condition_met(self, access: MemAccess) -> bool:
+    def _branch_condition_met(self, access: MemAccess) -> bool:
         ''' Return if the current branch condition is met by checking the next instruction address '''
         if access.instr.is_branch:
             if access.instr.target_value == access.next_instr_addr:
@@ -594,9 +614,24 @@ class CalcInstructionParser:
         # For safety reasons not to miss a LUT
         elif self._check_for_rom_address(self.saved_registers.X):
             raise NotImplementedError("Expected a defined lookup table")
+        
+        # At this point, we wrote a LUT to the screen and further calculation expressions could be disturbing.
+        # E.g. IMPREZA96 TCS @ 0x37C0: Error codes get written like a scaling with LUT access, but afterwards,
+        # The hex value of the error code gets printed to the upper screeen (jsr index_to_ascii -> std ssm_display_y0_x7)
+        # -> Lock further calculations to avoid these
+        self._lock_calculation = True
+
+        # TODO: DAs reicht so nicht -> Der Fehlercode von TCS wird in HEX ausgegeben, ist aber nicht im Text enthalten, den müsste man also 
+        # abhängig von index_to_ascii nochmal extra behandeln. Evtl. die Funktion dann mocken
 
 
     # --- Instruction handlers ---
+
+    def psha(self, access: MemAccess):
+        pass
+
+    def pula(self, access: MemAccess):
+        pass
 
     def ldaa(self, access: MemAccess):
         self.set_target_from_var_to_register(access, "A")
@@ -620,8 +655,12 @@ class CalcInstructionParser:
     def std(self, access: MemAccess):
         self.set_target_from_register_to_var(access, "D")
     
-    def xgdx(self, access: MemAccess):
+    def stx(self, access: MemAccess):
         self.lut_access.set_x_reg_modified()
+        self.set_target_from_register_to_var(access, "X")
+    
+    def xgdx(self, access: MemAccess):
+        self.lut_access.set_x_reg_modified(d_and_x_mixed=True)
 
         if self.new_calc_register == "D":
             self.new_calc_register = "X"
@@ -975,7 +1014,7 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
-            if self.branch_condition_met(access):
+            if self._branch_condition_met(access):
                 self.raw_calculations.append(f" if {test_expression} == {test_value}")
                 cond = sp.Eq(test_expression, test_value)
             else:
@@ -988,7 +1027,7 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
-            if self.branch_condition_met(access):
+            if self._branch_condition_met(access):
                 self.raw_calculations.append(f" if {test_expression} != {test_value}")
                 cond = sp.Ne(test_expression, test_value)
             else:
@@ -1001,7 +1040,7 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
-            if self.branch_condition_met(access):
+            if self._branch_condition_met(access):
                 self.raw_calculations.append(f" if {test_expression} >= {test_value}")
                 cond = sp.Ge(test_expression, test_value)
             else:
@@ -1016,7 +1055,7 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
-            if self.branch_condition_met(access):
+            if self._branch_condition_met(access):
                 self.raw_calculations.append(f" if {test_expression} < {test_value}")
                 cond = sp.Lt(test_expression, test_value)
             else:
@@ -1029,7 +1068,7 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
-            if self.branch_condition_met(access):
+            if self._branch_condition_met(access):
                 self.raw_calculations.append(f" if {test_expression} >= {test_value}")
                 cond = sp.Ge(test_expression, test_value)
             else:
@@ -1042,7 +1081,7 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
-            if self.branch_condition_met(access):
+            if self._branch_condition_met(access):
                 self.raw_calculations.append(f" if {test_expression} < {test_value}")
                 cond = sp.Lt(test_expression, test_value)
             else:
@@ -1055,7 +1094,7 @@ class CalcInstructionParser:
             self.value_depended_branches = True
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
-            if self.branch_condition_met(access):
+            if self._branch_condition_met(access):
                 self.raw_calculations.append(f" if {test_expression} >= {test_value}")
                 cond = sp.Ge(test_expression, test_value)
             else:

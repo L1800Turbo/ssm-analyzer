@@ -15,6 +15,7 @@ class RomEmulationError(Exception):
     pass
 
 class CurrentSelectedDevice(IntEnum):
+    UNDEFINED = 0
     EGI = 0x01
     AT  = 0x02
     AC  = 0x04

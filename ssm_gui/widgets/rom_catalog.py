@@ -41,7 +41,7 @@ class RomCatalogWidget(QWidget):
         self.rom_info_model.setHorizontalHeaderLabels(['Item', 'Value'])
         self.rom_info_tree.setModel(self.rom_info_model)
 
-    def _refresh_rom_info_tree(self):
+    def refresh_rom_info_tree(self):
 
         def object_to_tree_items(key, value):
             node = QStandardItem(str(key))

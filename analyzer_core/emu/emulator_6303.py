@@ -7,6 +7,7 @@ import logging
     # Capstone-Import entfernt, stattdessen Disassembler/Instruction
 
 from analyzer_core.config.memory_map import MemoryMap, MemoryRegion, RegionKind
+from analyzer_core.config.ssm_model import CurrentSelectedDevice
 from analyzer_core.emu.asm_html_logger import AsmHtmlLogger
 from analyzer_core.emu.memory_manager import MemoryManager
 from analyzer_core.data.rom_image import RomImage
@@ -47,7 +48,8 @@ class Emulator6303:
     def __init__(
         self,
         rom_image: RomImage,
-        dasm: Optional[Disassembler630x] = None,
+        current_device: CurrentSelectedDevice,
+        #dasm: Optional[Disassembler630x] = None,
         rom_config: Optional[RomConfig] = None,
         hooks: Optional[HookManager] = None,
         tracer: Optional[ExecutionTracer] = None,
@@ -56,7 +58,8 @@ class Emulator6303:
         initial_sp: Optional[int] = None
     ) -> None:
         
-        self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom) # TODO Das noch raus, wird aber aus den Mocks genommen, mit debugger ugcken, wie man das weg bekommt
+        #self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom) # TODO Das noch raus, wird aber aus den Mocks genommen, mit debugger ugcken, wie man das weg bekommt
+        self.current_device = current_device
 
         self.memory_map = memory_map if memory_map else MemoryMap()
         self.hooks = hooks or HookManager()
@@ -270,10 +273,12 @@ class Emulator6303:
 
     # --- Step/Execute ---
     def get_current_instruction(self) -> Optional[Instruction]:
-        return self.rom_config.instructions.get(self.PC)
+        mapped_pc = self.rom_config.get_mapped_address(self.PC, self.current_device)
+        return self.rom_config.instructions.get(mapped_pc)
         #for instr in self.rom_config.instructions:
         #    if instr.address == self.PC:
         #        return instr
+        
         
         #raise EmulationError(f"Couldn't find decompiled instruction at address 0x{self.PC:04X}")
         #return self.dasm.disassemble_step(self.PC)
@@ -316,7 +321,7 @@ class Emulator6303:
     
         instr = self.get_current_instruction()
         if not instr:
-            raise EmulationError(f"No instruction at 0x{self.PC:04X}")
+            raise EmulationError(f"No instruction at 0x{self.PC:04X}") # TODO Mapped und so angeben
         
         # TODO Debug-Nachricht bauen bei Funktionsaufruf, wenn unbekannte Funktion aufgerufen wird?
         
@@ -325,7 +330,7 @@ class Emulator6303:
 
             asm_step: MemAccess = func(instr)
 
-            if instr.address == 0x31C2 or instr.address == 0x2C36:
+            if instr.address == 0x2A59:
                 pass
 
             if instr.address == 0x2B75: # DIO1 bei 0x2C36 für 4AT könnte auch noch komisch werden -> romid3 abhängig

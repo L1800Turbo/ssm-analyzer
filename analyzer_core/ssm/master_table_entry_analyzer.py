@@ -155,7 +155,7 @@ class MasterTableEntryAnalyzer:
         else:
             # If not already mocked, do this for unknown action patterns
             if not self.emulator.hooks.get_mock(action_ptr):
-                self.logger.warning(f"No handling defined for action function {action_fn.name} (0x{action_fn.address:04X}) "
+                self.logger.warning(f"No handling defined for action function {action_fn.name} (0x{action_fn.rom_address:04X}) "
                                     f"for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
                 self.emulator.hooks.mock_function(action_ptr, mock_default_action)
 
@@ -197,13 +197,19 @@ class MasterTableEntryAnalyzer:
     def check_decompile_detect_pattern(self, action_ptr: int):
         # Prequisities: Check if this function is already known in assembly
         if action_ptr not in self.rom_cfg.action_addresses:
-            disasm = Disassembler630x(self.emulator.mem.rom_image.rom) # TODO Besser raussuchen? wie bei der read action?
+            disasm = Disassembler630x(self.emulator.mem, self.rom_cfg, self.current_device) # TODO Besser raussuchen? wie bei der read action?
             disasm.disassemble_reachable(action_ptr, self.rom_cfg.instructions, self.rom_cfg.call_tree)
 
             pattern_detector = PatternDetector(self.rom_cfg)
             action_fn_patterns = pattern_detector.detect_patterns(self.rom_cfg.instructions, "action_table_pointer_pattern", no_warnings=True)
-            for action_fn_name, action_fn_addr in action_fn_patterns.items():
-                self.rom_cfg.add_function_address(action_fn_name, action_fn_addr)
-                self.rom_cfg.action_addresses.add(action_ptr)
+
+            # TODO recht doppelt in scaling und so ja auch
+            # for action_fn_name, action_fn_addr in action_fn_patterns.items():
+            #     self.rom_cfg.add_refresh_mapped_function(
+            #         name=action_fn_name,
+            #         mapped_address=action_fn_addr,
+            #         current_device=self.current_device,
+            #         )
+            self.rom_cfg.action_addresses.add(action_ptr)
 
        

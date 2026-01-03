@@ -23,6 +23,9 @@ class ActionTableModel(QAbstractTableModel):
         # General action
         rows.append(("Action Type", self.action.action_type.name))
 
+        if self.action.ecu_addresses:
+            rows.append(("ECU Addresses", ", ".join(f"0x{addr:04X}" for addr in self.action.ecu_addresses)))
+
         if self.action.scaling is not None:
             scaling = self.action.scaling
             if scaling.scaling is not None:
@@ -35,6 +38,11 @@ class ActionTableModel(QAbstractTableModel):
                 rows.append(("Lookup table", ""))
                 for key, val in scaling.lookup_tables.items():
                     rows.append((f"  Index {key}", str(val)))
+        
+        if self.action.switches is not None:
+            rows.append(("Switches", ""))
+            for switch in self.action.switches:
+                rows.append((f"  {switch.name}", f"Bit {switch.bit}, Inverted: {switch.inverted}"))
 
 
         return rows

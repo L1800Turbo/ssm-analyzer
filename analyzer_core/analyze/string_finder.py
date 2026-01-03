@@ -1,13 +1,15 @@
 
 from analyzer_core.analyze.repo import PatternRepository
 from analyzer_core.config.rom_config import RomConfig
+from analyzer_core.config.ssm_model import CurrentSelectedDevice
 from analyzer_core.data.rom_image import RomImage
 
 
 class RomStringFinder:
-    def __init__(self, rom_image: RomImage, pattern_repo: PatternRepository, rom_config: RomConfig):
+    def __init__(self, rom_image: RomImage, pattern_repo: PatternRepository, rom_config: RomConfig, current_device: CurrentSelectedDevice):
         self.rom_image = rom_image
         self.rom_config = rom_config
+        self.current_device = current_device
 
         self.str_patterns = pattern_repo.get_string_patterns()
 
@@ -22,5 +24,6 @@ class RomStringFinder:
                 self.rom_config.add_string(
                     name=name,
                     address=address,
+                    current_device=self.current_device,
                     length=len(value)
                 )
