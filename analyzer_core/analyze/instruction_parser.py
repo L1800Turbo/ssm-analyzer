@@ -438,9 +438,15 @@ class CalcInstructionParser:
                 symplified_conds.append(self._fast_simplify_condition(cond)) # type: ignore
             condition = sp.Or(*symplified_conds)
             #simplified_condition = sp.simplify(condition, force=True)
-            #simplified_condition = sp.simplify(condition)
-            #simplified_condition = sp.simplify_logic(condition)
             simplified_condition = self._fast_simplify_condition(condition) # type: ignore
+            #simplified_condition = sp.simplify_logic(condition)
+
+            # Speedup: general simplify is quite slow, so skip it for Ne
+            if not(
+                isinstance(simplified_condition, sp.Ne) or
+                (isinstance(simplified_condition, sp.And) and all(isinstance(arg, sp.Ne) for arg in simplified_condition.args))
+            ):
+                simplified_condition = sp.simplify(condition) # type: ignore
             
             combined_equations.append((expr, simplified_condition))
         

@@ -1,6 +1,24 @@
 # MainWindow for SSM GUI
 # Tab-based: Assembly, ROM import/info, General Config
 
+
+# TODO Nochmal überdenken die UI:
+'''
+- ROMs aus Ordner auflisten und in RomServices laden, noch nicht analysieren
+- wenn eine Rom geladen wird, soll zunächst der Hex-Code angezeigt werden
+- Dann disassembly ohne alles anzeigen
+- dann die analysen laufen lassen
+- dann asm wieder aktualisieren und function table und son zeug
+- wenn Fehler auftauchen: zwischenstand anzeigen mit Fehlermeldung
+- später: Reactive?
+
+- bei mehreren Dateien dann: analyse druchführen und angeben, dass analyse abgeschlossen ist. 
+    für die reine Anzeige ist dann keine analyzse mehr nötgi
+- auch eine Möglichkeit für "alles analyiseren"
+
+
+'''
+
 import logging
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QStatusBar, QMenuBar, QMenu, QFileDialog, QTextEdit, QHBoxLayout, QLabel, QComboBox, QPushButton
 from PyQt6.QtGui import QAction
