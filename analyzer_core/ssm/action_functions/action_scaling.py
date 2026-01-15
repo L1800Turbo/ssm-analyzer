@@ -47,10 +47,9 @@ class SsmActionScalingFunction(SsmActionHelper):
         self._set_unit()
         self._add_function_mocks()
 
-        self.instr_parser = CalcInstructionParser(self.rom_cfg, self.emulator, read_address=self.rom_cfg.address_by_name("ssm_rx_byte_2"))
-        # Add function mocks where we need information from the disassembly as variable names could be unknown before
-        #self.instr_parser.add_function_mocks()
-        self.instr_parser.init_new_instruction()
+        # TODO hier auch dann Listen mit mehreren addresses
+        self.instr_parser = CalcInstructionParser(self.rom_cfg, self.emulator, read_addresses=[self.rom_cfg.address_by_name("ssm_rx_byte_2")])
+        #self.instr_parser.init_new_instruction() already done in init of CalcInstructionParser
 
         self._emulate_receive_ssm_response()
 
@@ -191,7 +190,6 @@ class SsmActionScalingFunction(SsmActionHelper):
         #    self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("print_switch_screen"), hook_post_print_switch_screen)
 
         if self.mt_entry.menu_item_str().startswith("FA"):
-            self.use_switches_mode = True
 
             # We mock the function to set the lights completely
             '''
@@ -212,7 +210,11 @@ class SsmActionScalingFunction(SsmActionHelper):
 
             TODO currently this will call the function multiple times if several addresses are used
             '''
-            self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("hex_value_to_ssm_light"), mock_hex_value_to_ssm_light)
+            if self.rom_cfg.check_for_name("hex_value_to_ssm_light"):
+                # Use switches mode only if hex_value_to_ssm_light is available
+                # TODO: eigentlich müsste der mode aus, wenn die funktion nicht aufgerufen wird
+                self.use_switches_mode = True
+                self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("hex_value_to_ssm_light"), mock_hex_value_to_ssm_light)
             
     
     def _emulate_receive_ssm_response(self):
@@ -236,6 +238,9 @@ class SsmActionScalingFunction(SsmActionHelper):
             else:
                 logger.warning(f"Scaling function at 0x{self.scaling_fn_ptr:04X} has no item label.")
             return
+        
+        if self.scaling_fn_ptr == 0x25FF:
+            pass
         
         # Also, save it as a global function address
         if not self.rom_cfg.check_for_function_address(self.scaling_fn_ptr):
@@ -304,6 +309,9 @@ class SsmActionScalingFunction(SsmActionHelper):
 
         # TODO Das dauert ewig bei vielen Bedingungen -> Text-Luts AC
         final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
+
+
+        # TODO Abfrage rein, ob in der final nicht wenigstens eine True bedingung ist? ansonsten wären ja Werte ungültig...
 
         # Check if we are in Switches mode where we don't need a static scaling but the switch values
         # Switches are already handled in the mocks above
@@ -396,9 +404,7 @@ class SsmActionScalingFunction(SsmActionHelper):
                         continue
                     else:
                         raise NotImplementedError("Didn't expect a string LUT at this point")
-            
-            if scaling_definition.scaling_address_pointer == 0x2795:
-                pass
+        
 
             # Round expr to the number of decimal places in scaling_definition
             if scaling_definition.precision_decimals is not None and scaling_definition.precision_decimals >= 0:

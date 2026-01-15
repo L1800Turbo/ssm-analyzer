@@ -106,6 +106,28 @@ class MasterTableEntryAnalyzer:
             print(f"Lower Screen [{screen_line}]", flush=True)
             em.mock_return()
 
+        def unknown_action(action_fn):
+            # If not already mocked, do this for unknown action patterns
+            if not self.emulator.hooks.get_mock(action_ptr):
+
+                if action_fn is not None:
+                    self.logger.warning(f"No handling defined for action function {action_fn.name} (0x{action_fn.rom_address:04X}) "
+                                        f"for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
+                else:
+                    self.logger.warning(f"Action pointer address 0x{action_ptr:04X} couldn't be matched to a function "
+                                        f"for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
+                self.emulator.hooks.mock_function(action_ptr, mock_default_action)
+
+                # Also mock the print functions to just print the labels for debug on unknown actions
+                self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
+                self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
+                # Or don't use it at all
+                #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_default_action)
+                #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_default_action)
+                
+
+                SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
+
 
         action_ptr = self.mt_entry.action_address_rel
 
@@ -120,7 +142,10 @@ class MasterTableEntryAnalyzer:
             # Mock this function if not done already
             #if not self.emulator.hooks.get_mock(action_ptr):
             #    self.logger.warning(f"Action pointer address 0x{action_ptr:04X} couldn't be matched to a function.")
-            self.emulator.hooks.mock_function(action_ptr, mock_default_action)
+            
+            # self.emulator.hooks.mock_function(action_ptr, mock_default_action)
+
+            unknown_action(action_fn)
             return
         
         action_helper: Optional[SsmActionHelper] = None
@@ -153,21 +178,22 @@ class MasterTableEntryAnalyzer:
         # Hier vorerst: Lower-Scaling-Mastertable-Funktion aufrufen, die dann die Scaling Funktion aufruft
 
         else:
-            # If not already mocked, do this for unknown action patterns
-            if not self.emulator.hooks.get_mock(action_ptr):
-                self.logger.warning(f"No handling defined for action function {action_fn.name} (0x{action_fn.rom_address:04X}) "
-                                    f"for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
-                self.emulator.hooks.mock_function(action_ptr, mock_default_action)
+            unknown_action(action_fn)
+            # # If not already mocked, do this for unknown action patterns
+            # if not self.emulator.hooks.get_mock(action_ptr):
+            #     self.logger.warning(f"No handling defined for action function {action_fn.name} (0x{action_fn.rom_address:04X}) "
+            #                         f"for MasterTable entry {self.mt_entry.menu_item_str()}, mocking it.")
+            #     self.emulator.hooks.mock_function(action_ptr, mock_default_action)
 
-                # Also mock the print functions to just print the labels for debug on unknown actions
-                self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
-                self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
-                # Or don't use it at all
-                #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_default_action)
-                #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_default_action)
+            #     # Also mock the print functions to just print the labels for debug on unknown actions
+            #     self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
+            #     self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
+            #     # Or don't use it at all
+            #     #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_default_action)
+            #     #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_default_action)
                 
 
-                SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
+            #     SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator)
 
 
         # Run the function
@@ -201,7 +227,7 @@ class MasterTableEntryAnalyzer:
             disasm.disassemble_reachable(action_ptr, self.rom_cfg.instructions, self.rom_cfg.call_tree)
 
             pattern_detector = PatternDetector(self.rom_cfg)
-            action_fn_patterns = pattern_detector.detect_patterns(self.rom_cfg.instructions, "action_table_pointer_pattern", no_warnings=True)
+            action_fn_patterns = pattern_detector.detect_patterns(self.rom_cfg.instructions, "action_table_pointer_pattern") #no_warnings=True
 
             # TODO recht doppelt in scaling und so ja auch
             # for action_fn_name, action_fn_addr in action_fn_patterns.items():

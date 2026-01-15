@@ -404,16 +404,17 @@
         { "mnemonic": "tst", "op_str": "VAR{response_received_flag}" },
         { "mnemonic": "beq" },
         { "mnemonic": "clr" },
+        { "max_skip": 3},
         { "mnemonic": "ldaa", "op_str": "REF{current_ssm_protocol_version}" },
         { "mnemonic": "cmpa", "op_str": 2 },
         { "mnemonic": "beq" },
-        { "max_skip": 9},
+        { "max_skip": 27},
         { "mnemonic": "clr", "op_str": "VAR{master_table_run_scaling_wait_counter}" },
         { "mnemonic": "clr", "op_str": "VAR{print_-_sign}" },
         { "mnemonic": "clr", "op_str": "VAR{print_+_sign}" },
         { "mnemonic": "ldx", "op_str": "REF{current_scale_fn_table_pointer}" }
       ],
-      "description": "IMPREZA96 @0xAC7B: Call scaling function from Mastertable MainLoop, TODO: clr hat response_received_flag"
+      "description": "IMPREZA96 @0xAC7B: Call scaling function from Mastertable MainLoop, TODO: clr hat response_received_flag, max_skip: 3 für SVX96, zweites max_skip 9 für IMPREZA96?"
     }
   ],
   "action_table_pointer_pattern":
@@ -423,13 +424,14 @@
       "pattern": [
         { "mnemonic": "staa", "op_str": "VAR{current_scaling_index}" },
         { "mnemonic": "stab", "op_str": "VAR{current_ecu_address_index}" },
+        { "max_skip": 5},
         { "mnemonic": "ldd",	 "op_str": "0x012C" },
         { "mnemonic": "jsr",  "op_str": "REF{wait_ms}" },
         { "mnemonic": "tst",  "op_str": "REF{romid_EGi_Axxx_scheme}" }, 
         { "mnemonic": "beq" },
         { "mnemonic": "ldx" }
       ],
-      "description": "IMPREZA96 @0x95E9: Action for YEAR function, print model year and ECU version to screen"
+      "description": "IMPREZA96 @0x95E9: Action for YEAR function, print model year and ECU version to screen, skip 4 for SVX96"
     },
     {
       "name": "action_read_ecu",

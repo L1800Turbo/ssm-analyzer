@@ -133,7 +133,7 @@ class LookupTableHelper:
             #"item_size": item_size,
             "name": table_name,
             "item_size": item_size,
-            "is_String": item_size == 16,
+            "is_String": item_size >= 16,
         })
 
         cls.add_index_values(lut_class, possible_index_values, emu)
@@ -159,6 +159,11 @@ class LookupTableHelper:
                     lut_class.table_data[i] = emu.read16(lut_class.table_ptr + i * 2)
                 elif lut_class.item_size == 16:
                     item_bytes = emu.mem.read_bytes(lut_class.table_ptr + i * 0x10, 0x10)
+                    lut_class.table_data[i] = byte_interpreter.render(item_bytes).strip()
+                elif lut_class.item_size == 18:
+                    # SVX96 AC 0x291D: Quasi switch with 16byte for string and 2 byte for upper SSM lights
+                    # TODO Die LED-Werte werden fürs erste ignoriert
+                    item_bytes = emu.mem.read_bytes(lut_class.table_ptr + i * 0x12, 0x10)
                     lut_class.table_data[i] = byte_interpreter.render(item_bytes).strip()
                 else:
                     raise ValueError("Unsupported item size for lookup table.")
@@ -310,7 +315,15 @@ class LookupTableHelper:
                 else:
                     lut_values['default'] = eval_expression(curr_expr)
             elif isinstance(cond, (sp.Gt, sp.Lt, sp.Ge, sp.Le)):
-                lut_values[str(cond)] = eval_expression(curr_expr)
+                if len(curr_expr.free_symbols) > 0 and LookupTableHelper.is_lut(curr_expr):
+                    for idx in curr_expr.func.table_data.keys():
+                        # Check if idx satisfies the condition
+                        if cond.subs({symbol: idx}): # type: ignore
+                            expr_eval: sp.Expr = curr_expr.subs({symbol: idx}) # type: ignore
+                            lut_values[idx] = eval_expression(expr_eval)
+                        else:
+                            raise NotImplementedError("Got LUT index with non matching condition.")
+
             else:
                 raise NotImplementedError("Current condition for LUT index not implemented.")                    
 

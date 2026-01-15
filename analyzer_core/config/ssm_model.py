@@ -190,7 +190,7 @@ class SsmAction:
     upper_label_raw: str
     lower_label_raw: Optional[str] = None
 
-    ecu_addresses: list[int] = field(default_factory=list)
+    ecu_addresses: set[int] = field(default_factory=set)
 
     scaling: Optional[RomScalingDefinition] = None
     switches: Optional[list[RomSwitchDefinition]] = None

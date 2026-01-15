@@ -1,11 +1,14 @@
 from typing import Optional, List, Tuple
 import logging
 
+from analyzer_core.analyze.instruction_parser import CalcInstructionParser
+from analyzer_core.disasm.insn_model import Instruction
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.config.rom_config import RomConfig, RomConfigError
 from analyzer_core.config.ssm_model import RomEmulationError, RomIdTableEntry_512kb, CurrentSelectedDevice, RomIdTableInfo
 from analyzer_core.emu.memory_manager import MemoryManager
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
+from analyzer_core.emu.tracing import MemAccess
 
 class RomIdEntryAnalyzer:
     """
@@ -66,6 +69,7 @@ class RomIdEntryAnalyzer:
             # else:
             #     raise RuntimeError("Couldn't fetch instruction in mock_set_communication_protocol")
 
+        self.emulator.hooks.clear_hooks_and_mocks()
 
         self.emulator.hooks.add_read_hook(ssm_receive_status, hook_ssm_check_receive_status_set_error)
         self.emulator.write8(no_success_on_first_connection_flag, 0)
@@ -192,17 +196,90 @@ class RomIdEntryAnalyzer:
         Mostly to have a proper working emulator: Save vars from current RomID table into respective memory locations
         '''
 
-        # Set PC to function "set_current_romid_values"
-        self.emulator.set_pc(self.rom_cfg.address_by_name("set_current_romid_values"))
+        def emulate_set_current_romid_values(read_addr, value) -> None:
+            # Clear previous hooks/mocks
+            self.emulator.hooks.clear_hooks_and_mocks()
+            SsmEmuHelper.execute_default_mocks(self.rom_cfg, self.emulator)
+
+            #SsmEmuHelper.mock_read_from_ecu_todo_weg(self.rom_cfg, self.emulator, ecu_addresses=read_adresses) # TODO auch Adressen als pointer rein
+            SsmEmuHelper.hook_fn_read_from_ecu(self.rom_cfg, self.emulator, ecu_addresses=read_addr, answer_value=value) 
+
+            assert self.entry.entry_ptr_address is not None # as it's called only when defined
+            self.emulator.write16(current_romid_line_pointer_addr, self.entry.entry_ptr_address)
+
+            # Set PC to function "set_current_romid_values"
+            self.emulator.set_pc(self.rom_cfg.address_by_name("set_current_romid_values"))
+
+            self.emulator.run_function_end()
+
 
         # Get pointer for this RomID in RomID List
         current_romid_line_pointer_addr = self.rom_cfg.address_by_name("current_romid_line_pointer")
-        
         if self.entry.entry_ptr_address is None:
             raise RomEmulationError(f"No pointer address defined for RomID {self.entry.print_romid_str()}")
-        self.emulator.write16(current_romid_line_pointer_addr, self.entry.entry_ptr_address)
+        
+        read_addresses: set[int] = set()
+        
+        emulate_set_current_romid_values(read_addresses, 0x00)
 
-        self.emulator.run_function_end()
+        # If there were read addresses during RomID setup, we need to analyze them as they influence which RomID table is selected
+        if len(read_addresses) > 0:
+            self.logger.warning(f"execute_set_current_romid_values: read addresses during RomID setup: {[hex(addr) for addr in read_addresses]}")
+            # TODO hier etwas mit den Adressen machen, bsp SVX96: es gibt 2x AC-Tabellen mit einer RomID, die aber ein bit an 0x0015 auslesen und avon abhängig machen, welche Tabelle genutzt wird.
+            # TODO Struktur ermitteln, die dann gleiche RomIDs ermöglicht, ist ja letztlich nur eine Liste, aber es fehlt dann ein bestimmtdes Flag in der Definition
+
+
+        
+            ssm_inputs: List[int] = [0] 
+            seen_samples: set[int] = set()
+
+            instr_parser = CalcInstructionParser(self.rom_cfg, self.emulator, read_addresses=[self.rom_cfg.address_by_name("ssm_rx_byte_2")])
+
+            def trace_rx_value_calculation(instr: Instruction, access: MemAccess):
+                instr_parser.do_step(instr, access)
+
+            while ssm_inputs:
+                rx_test_value = ssm_inputs.pop(0)
+                seen_samples.add(rx_test_value)
+
+                self.emulator.add_logger("scaling_fn_ssm_rx_logger", trace_rx_value_calculation)
+                instr_parser.init_new_instruction()
+
+                emulate_set_current_romid_values(read_addresses, rx_test_value)
+
+                self.emulator.remove_logger("scaling_fn_ssm_rx_logger")
+
+                # Get jump conditions from guards to find new test inputs
+                for value in instr_parser.solve_jump_conditions():
+                    if value not in seen_samples and value not in ssm_inputs:
+                        ssm_inputs.append(value)
+            
+            if len(read_addresses) > 1:
+                raise NotImplementedError("Handling of multiple read addresses during RomID setup not implemented yet.")
+            
+            # TODO conditional romid tabelle ergänzen, jetzt kommen ja mehrere mastertabellen
+
+
+
+    
+            # erst als test nur
+
+
+            # def hook_pre_scaling_function(em: Emulator6303):
+            #     #logger.debug(f"hook_pre_scaling_function at {self.scaling_fn_ptr:04X}")
+            #     # TEST 28.11. self.emulator.hooks.add_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
+            #     self.emulator.add_logger("scaling_fn_ssm_rx_logger", trace_rx_value_calculation)
+            
+            # def hook_post_scaling_function(em: Emulator6303, access):
+            #     #print(f"hook_post_scaling_function at {self.scaling_fn_ptr:04X}", flush=True)
+            #     # TEST 28.11. self.emulator.hooks.remove_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
+
+            # self.emulator.hooks.add_pre_hook(self.emulator.PC, hook_pre_scaling_function)
+            # self.emulator.hooks.add_post_hook(self.emulator.PC, hook_post_scaling_function)
+
+            
+
+            
 
     def run_attach_cu_specific_addresses(self) -> None:
         """

@@ -627,6 +627,20 @@ class Emulator6303:
         self.PC += instr.size
         ma.next_instr_addr = self.PC
         return ma
+    
+    @operand_needed
+    def bitb(self, instr: Instruction) -> MemAccess:
+        ma = self.__read_value8(instr)
+        if ma.value is None:
+            raise ValueError("Invalid memory access")
+        
+        self._set_ZN_8(self.B & ma.value)
+        self.flags.V = 0
+
+        old_PC = self.PC
+        self.PC += instr.size
+        ma.next_instr_addr = self.PC
+        return ma
 
     @operand_needed
     def cmpa(self, instr: Instruction) -> MemAccess:
@@ -1082,6 +1096,26 @@ class Emulator6303:
         self.PC += instr.size
         ma.next_instr_addr=self.PC
         return ma
+    
+    def sba(self, instr: Instruction) -> MemAccess:
+        """Subtract B from A."""
+        result = (self.A - self.B) & 0xFF
+        self._set_ZN_8(result)
+        self.flags.C = 1 if self.A < self.B else 0
+        self.flags.V = 1 if ((self.A ^ self.B) & (self.A ^ result) & 0x80) != 0 else 0
+        self.A = result
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
 
     @operand_needed
     def adca(self, instr: Instruction) -> MemAccess:
@@ -1444,6 +1478,26 @@ class Emulator6303:
         old_PC = self.PC
 
         if self.flags.N == self.flags.V:
+            self.PC = instr.target_value
+        else:
+            self.PC += instr.size
+
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=self.rom_config.get_by_address(old_PC),
+            value=None,
+            rw='X',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
+    
+    @operand_needed
+    def bls(self, instr: Instruction) -> MemAccess:
+        """Branch if Lower or Same (C == 1 or Z == 1)"""
+        old_PC = self.PC
+
+        if self.flags.C == 1 or self.flags.Z == 1:
             self.PC = instr.target_value
         else:
             self.PC += instr.size

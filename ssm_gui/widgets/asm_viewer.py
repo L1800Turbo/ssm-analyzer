@@ -484,7 +484,7 @@ class AsmViewerWidget(QWidget):
         addrs = set()
         if di.type != ItemType.FUNC_LABEL:
             for off in range(max(di.size, 1)):
-                addrs.add((di.address + off) & 0xFFFF)
+                addrs.add((di.orig_addr + off) & 0xFFFF)
         self.hex_model.set_highlight(addrs, None)
     # Scroll hex view to start of line
         if addrs:

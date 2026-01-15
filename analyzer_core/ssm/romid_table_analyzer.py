@@ -99,6 +99,12 @@ class RomIdTableAnalyzer:
             # request romid to capture hardcoded values (may prune protocols etc.)
             entry_analyzer.request_romid_and_capture(current_device)
 
+
+            if current_device != CurrentSelectedDevice.AC:
+               continue 
+
+
+
             # write the pointer for this entry into RAM for other functions to use
             entry_analyzer.execute_set_current_romid_values()
 
@@ -108,8 +114,7 @@ class RomIdTableAnalyzer:
             # TODO Für Debuggen und schneller suchen
             #if entry.print_romid_str() != "74 BD 00" and entry.print_romid_str() != "71 93 00":  # 76 5D B0  71 93 00
             #   return
-            #if current_device != CurrentSelectedDevice.TCS:
-            #    continue 
+            
 
 
             # Create MasterTable analyzer for this entry (done by caller or here)

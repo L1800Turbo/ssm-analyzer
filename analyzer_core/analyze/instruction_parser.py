@@ -25,6 +25,7 @@ class TwoStepComplement(IntEnum):
     NONE = 0
     INVERT = 1  # ~ x
     INVERT_HI_BYTE = 2 # ~ on high byte only -> only supported if low byte will also be ~
+    #NEGATE = 3  # - x
 
 class TwoStepDivide(IntEnum):
     NONE = 0
@@ -44,10 +45,9 @@ logger = logging.getLogger(__name__)
 
 class CalcInstructionParser:
 
-    def __init__(self, rom_cfg: RomConfig, emulator: Emulator6303, read_address: int):
-        self.new_calc_address = None
-        self.new_calc_register = None
-        self.read_address = read_address
+    def __init__(self, rom_cfg: RomConfig, emulator: Emulator6303, read_addresses: list[int]):
+        
+        self.read_addresses = read_addresses
 
         self.emulator = emulator
         self.rom_cfg = rom_cfg
@@ -90,6 +90,10 @@ class CalcInstructionParser:
 
 
     def init_new_instruction(self):
+        self.new_calc_address = None
+        self.new_calc_register = None
+        self.old_calc_register = None # TODO zunächst für bita SVX96
+
         self.raw_calculations: list[str] = []
 
         self.current_expr: sp.Expr = sp.Expr()
@@ -175,10 +179,18 @@ class CalcInstructionParser:
         
         # Did we add calculation steps but forgot about the multi step calculations?
         if old_multi_step_calc != TwoStepComplement.NONE and \
-           old_multi_step_calc == self.multi_step_complement and \
-           self.calc_register_involed:
-            raise ParserError(f"Calculation step not handled for instruction {instr.mnemonic} at address 0x{instr.address:04X}")
+            old_multi_step_calc == self.multi_step_complement and \
+            self.calc_register_involed:
+                raise ParserError(f"Calculation step not handled for instruction {instr.mnemonic} at address 0x{instr.address:04X}")
         
+        '''
+            if old_multi_step_calc == TwoStepComplement.NEGATE:
+                # No calculation register involved, but still an invert pending
+                self.raw_calculations.append(f" - {self.current_expr} ")
+                self.current_expr = -self.current_expr  # type: ignore
+                self.multi_step_complement = TwoStepComplement.NONE
+            elif '''
+
         # Did we have a rounding for a possible divition but no division happened?
         if self.multi_step_divide == TwoStepDivide.ROUND_FOR_DIVISION and self.calc_register_involed:
             self.multi_step_divide_counter += 1
@@ -207,19 +219,38 @@ class CalcInstructionParser:
 
     def set_target_from_var_to_register(self, access: MemAccess, register: str):
         # If we read from the read address like ssm_rx_byte_2, we initialize the calculation
-        if access.instr.target_value == self.read_address:
+        if access.instr.target_value in self.read_addresses:
             self.new_calc_address = None
             self.new_calc_register = register
             self.calc_register_involed = True
+
+            # Position of the read address in the list, to create x1, x2, ...
+            position = self.read_addresses.index(access.instr.target_value) + 1
             
-            self.raw_calculations.append("x1") # TODO später noch mehre Variablen unterstützen
+            self.raw_calculations.append(f"x{position}")
+
+            # TODO so noch nicht, der muss ja jetzt die position kennen
+            # und: Wenn ein anderes Symbol drin ist, darf er nicht alles überschreiben
             self.current_expr = self.symbol
 
         elif self.__is_register_match(self.new_calc_register, register):
             # On string based LUTs this happens quite often, so don't show a warning each time
             #logger.warning(f"Overwriting calculation register {register} at instruction 0x{access.instr.address:04X}")
-            self.raw_calculations.append(str(access.value))
-            self.current_expr = sp.Integer(access.value)
+
+            # Distinguish here more in detail
+            if self.new_calc_register == "D" and register == "A":
+                self.raw_calculations.append(f"new A {access.value} & {self.saved_registers.B} in D ")
+                # TODO rightige Rechnung hier
+                self.current_expr = (self.current_expr) + (sp.Integer(access.value) << 8)
+                #self.current_expr = (self.current_expr % 256) + (sp.Integer(access.value) << 8)
+
+            elif self.new_calc_register == "D" and register == "B":
+                self.raw_calculations.append(f"New B {self.saved_registers.A} & {access.value}>>8 in D ")
+                # TODO richtige Rechnung hier
+                raise NotImplementedError("Overwriting D register with B not implemented yet.")
+            else:
+                self.raw_calculations.append(str(access.value))
+                self.current_expr = sp.Integer(access.value)
 
             self.calc_register_involed = True
         elif self.__is_address_match(access.instr.target_value, self.new_calc_address):
@@ -261,6 +292,10 @@ class CalcInstructionParser:
             self.calc_register_involed = False
         else:
             self.calc_register_involed = False
+
+            # If this was an interesting register, but we're overwriting it with something else, clear it
+            if self.new_calc_register == register:
+                self.new_calc_register = None
     
     def add_set_lookup_table(self, factor = None, index_var=None) -> list[int]:
         if not self.lut_access.address_defined():
@@ -364,6 +399,16 @@ class CalcInstructionParser:
                 return list(range(sp.Integer(mod_val)))
         # Symbol case: x1
         elif index_var.is_Symbol:
+            # Check if we got a single relational condition (e.g. x1 <= N)
+            if len(self.conditions) == 1 and isinstance(self.conditions[0], Relational):
+                rel:Relational = self.conditions[0]
+                # Only handle x1 <= N and x1 < N
+                if isinstance(rel, sp.Le) and rel.lhs.is_Symbol and rel.rhs.is_Integer:
+                    return list(range(sp.Integer(sp.Integer(rel.rhs) + 1)))
+                elif isinstance(rel, sp.Lt) and rel.lhs.is_Symbol and rel.rhs.is_Integer:
+                    return list(range(sp.Integer(rel.rhs)))
+            else:
+                raise NotImplementedError(f"Only <= and < inequalities with symbol on lhs and integer on rhs are supported: {index_var}")
             return list(range(256))  # 8 Bit
         
         elif index_var.is_Integer:
@@ -379,6 +424,7 @@ class CalcInstructionParser:
 
         Must not check on 'print_-_sign' flag, this one will get cleaned on 0 values before!
         '''
+        return # TODO Test
         if self.current_expr is not None and self.neg_flag_val == 1:
             self.current_expr = -self.current_expr
     
@@ -435,7 +481,8 @@ class CalcInstructionParser:
         for expr, conds in grouped.items():
             symplified_conds = []
             for cond in conds:
-                symplified_conds.append(self._fast_simplify_condition(cond)) # type: ignore
+                #symplified_conds.append(sp.simplify(self._fast_simplify_condition(cond))) # TODO funktioniert nicht bei SVX96 AC 0x2566
+                symplified_conds.append(sp.simplify(cond)) # type: ignore
             condition = sp.Or(*symplified_conds)
             #simplified_condition = sp.simplify(condition, force=True)
             simplified_condition = self._fast_simplify_condition(condition) # type: ignore
@@ -446,8 +493,14 @@ class CalcInstructionParser:
                 isinstance(simplified_condition, sp.Ne) or
                 (isinstance(simplified_condition, sp.And) and all(isinstance(arg, sp.Ne) for arg in simplified_condition.args))
             ):
-                simplified_condition = sp.simplify(condition) # type: ignore
+                simplified_condition = sp.simplify(simplified_condition) # type: ignore
             
+            if expr is not None:
+                expr = sp.sympify(expr.replace(
+                    lambda e:isinstance(e, sp.Mod) and e.args[1] == 256,
+                    lambda e: e.args[0]
+                ))
+
             combined_equations.append((expr, simplified_condition))
         
         combined_equations = self._sort_combined_equations(combined_equations)
@@ -521,6 +574,8 @@ class CalcInstructionParser:
     def set_target_from_register_to_var(self, access: MemAccess, register: str):
         if self.__is_register_match(self.new_calc_register, register):
             self.new_calc_address = access.instr.target_value
+            # TODO: Als test, der Wert bleibt ja im Accu, aber wird nicht zwangsläufig weiterverwendet
+            self.old_calc_register = self.new_calc_register
             self.new_calc_register = None
             self.calc_register_involed = True
         elif self.__is_address_match(access.instr.target_value, self.new_calc_address):
@@ -532,6 +587,39 @@ class CalcInstructionParser:
             
             self.raw_calculations.append(str(self.saved_registers.D))
             self.current_expr = sp.Integer(self.saved_registers.D)
+        
+        # If we write directly to the output buffer
+        elif access.instr.target_value in self.hex_buffer:
+            # TODO nicht überschreiben
+            #self.new_calc_address = access.instr.target_value
+            #self.new_calc_register = None
+
+            # First, get all buffer values out of memory
+            buffer_values = []
+            for addr in self.hex_buffer:
+                val = self.emulator.mem.read(addr)
+                buffer_values.append(val)
+
+            # Secondly, check if the target address (an actual calculation output) is in the buffer
+            if self.new_calc_address in self.hex_buffer:
+                buffer_idx = self.hex_buffer.index(self.new_calc_address)
+                buffer_values[buffer_idx] = self.current_expr
+
+            # Then, set the value we manipulated here
+            idx = self.hex_buffer.index(access.instr.target_value)
+            buffer_values[idx] = getattr(self.saved_registers, register)
+
+
+            # Setze den aktuellen Ausdruck als Zusammensetzung aller Teile
+            #self.raw_calculations.append(f"Overwriting hex_buffer[{idx}] with {self.saved_registers.D}, full buffer: {buffer_values}")
+            
+            
+            # Little Endian: niedrigstes Byte zuerst, höchstes zuletzt
+            symbolic_value = sum(sp.Mod(val, 256) * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
+            self.current_expr = symbolic_value
+            self.raw_calculations.append(f"Symbolic buffer value: {self.current_expr}")
+
+            self.calc_register_involed = True
         else:
             self.calc_register_involed = False
     
@@ -551,6 +639,11 @@ class CalcInstructionParser:
         else:
             test_expr = self.last_tested_expr
             self.last_tested_expr = None
+
+        # TODO TEST
+        # If we're currently using the inverted flag, we have to invert the condition as it won't happen afterwards
+        #if self.neg_flag_val == 1:
+        #    test_expr = -test_expr
         
         return test_expr
     
@@ -569,14 +662,33 @@ class CalcInstructionParser:
 
     def _divide(self, access: MemAccess):
         if self.new_calc_address in self.hex_buffer or self.new_calc_address == self.hex_buffer:
+            dividor = sp.Integer(self.saved_registers.D)
+
             # If we just added a +5 for rounding, remove it from the expression
             if self.multi_step_divide != TwoStepDivide.NONE:
                 # TODO wird einfach ausgelassen -> Prüfen
-                self.current_expr = self.current_expr - sp.Integer(5) 
-                self.raw_calculations.append("-5 (rounding removal)")
+
+                # Check how much rounding we need to remove
+                remove_rounding = 5
+                self.current_expr = self.current_expr - sp.Integer(5)
+
+                const, terms = self.current_expr.as_coeff_add()
+                if sp.Gt(const, 50) and dividor % 100 == 0:
+                    # If we divide by 100, the +5 rounding is actually +50 in the final result
+                    remove_rounding -= 50
+                    self.current_expr = self.current_expr - sp.Integer(50)
+                
+                const, terms = self.current_expr.as_coeff_add()
+                if sp.Gt(const, 500) and dividor % 1000 == 0:
+                    # If we divide by 1000, the +5 rounding is actually +500 in the final result
+                    remove_rounding -= 500
+                    self.current_expr = self.current_expr - sp.Integer(500)
+
+                self.raw_calculations.append(f"-{remove_rounding} (rounding removal)")
                 self.multi_step_divide = TwoStepDivide.NONE
-            self.current_expr = self.current_expr / self.saved_registers.D # type: ignore
-            self.raw_calculations.append(f"/ {self.saved_registers.D}")
+
+            self.current_expr = self.current_expr / dividor # type: ignore
+            self.raw_calculations.append(f"/ {dividor}")
             
             self.new_calc_register = None
             self.new_calc_address = self.hex_buffer
@@ -585,7 +697,8 @@ class CalcInstructionParser:
             self.calc_register_involed = False
 
     def _mul16bit(self, access: MemAccess):
-        if self.new_calc_register == "D" or self.new_calc_register == "B":
+        if (self.new_calc_register == "D" or self.new_calc_register == "B") or \
+            (self.new_calc_address in self.hex_buffer and self.old_calc_register in ("D", "B")): # Workaround for SVX96 AC 0x2639: gets written to buffer, but not used really..
             self.raw_calculations.append(f" * {self.saved_registers.X}")
             self.current_expr = self.current_expr * self.saved_registers.X # type: ignore
 
@@ -676,7 +789,17 @@ class CalcInstructionParser:
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
+            self.new_calc_register = None
     
+    def addb(self, access: MemAccess):
+        if self.new_calc_register == "B":
+            self.raw_calculations.append(f" + {access.instr.target_value}")
+            self.current_expr = self.current_expr + sp.Integer(access.instr.target_value)
+            
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+
     def addd(self, access: MemAccess):
 
         def check_for_division_rounding(target_value: int):
@@ -695,18 +818,21 @@ class CalcInstructionParser:
             self.raw_calculations.append(f" + {access.instr.target_value}")
             if self.multi_step_complement == TwoStepComplement.INVERT and access.instr.target_value == 1:
                 # If we had an invert before, we need to adjust the calculation
+                self.raw_calculations.append(f" ... -({self.current_expr}) instead of +1 and inverting")
                 # ~(x) + 1  == -x
-                self.current_expr = -self.current_expr # type: ignore
+                self.current_expr = -self.current_expr
                 self.multi_step_complement = TwoStepComplement.NONE
+
+                #self.multi_step_complement = TwoStepComplement.NEGATE
             else:
                 check_for_division_rounding(access.instr.target_value)
                 
-                self.current_expr = self.current_expr + access.instr.target_value # type: ignore
+                self.current_expr = self.current_expr + sp.Integer(access.instr.target_value)
 
             self.calc_register_involed = True
         elif self.new_calc_register == "B":
             self.raw_calculations.append(f" + {access.instr.target_value}")
-            self.current_expr = self.current_expr + access.instr.target_value # type: ignore
+            self.current_expr = self.current_expr + sp.Integer(access.instr.target_value)
 
             self.new_calc_register = "D" # Now we take both registers -> D
             self.calc_register_involed = True
@@ -722,7 +848,7 @@ class CalcInstructionParser:
                 check_for_division_rounding(self.saved_registers.D)
 
             self.raw_calculations.append(f" + {self.saved_registers.D}")
-            self.current_expr = self.current_expr + self.saved_registers.D # type: ignore
+            self.current_expr = self.current_expr + sp.Integer(self.saved_registers.D)
                 
             self.new_calc_register = "D"
             self.calc_register_involed = True
@@ -732,19 +858,19 @@ class CalcInstructionParser:
     def subd(self, access: MemAccess):
         if self.new_calc_register == "D":
             self.raw_calculations.append(f" - {access.instr.target_value}")
-            self.current_expr = self.current_expr - access.instr.target_value # type: ignore
+            self.current_expr = self.current_expr - sp.Integer(access.instr.target_value)
 
             self.calc_register_involed = True
         elif self.new_calc_register == "B":
             self.raw_calculations.append(f" - {access.instr.target_value}")
-            self.current_expr = self.current_expr - access.instr.target_value # type: ignore
+            self.current_expr = self.current_expr - sp.Integer(access.instr.target_value)
             self.new_calc_register = "D" # Now we take both registers -> D
             self.calc_register_involed = True
         elif self.new_calc_register == "A":
             raise NotImplementedError("subd handling for A register alone not implemented yet.")
         elif self.__is_address_match(access.instr.target_value, self.new_calc_address):
             self.raw_calculations.append(f" {self.saved_registers.D} - ")
-            self.current_expr = self.saved_registers.D - self.current_expr # type: ignore
+            self.current_expr = sp.Integer(self.saved_registers.D) - self.current_expr
 
             self.new_calc_register = "D"
             self.calc_register_involed = True
@@ -754,7 +880,16 @@ class CalcInstructionParser:
     def adca(self, access: MemAccess):
         if self.new_calc_register == "A":
             self.raw_calculations.append(f" + {access.instr.target_value} + {self.emulator.flags.C}")
-            self.current_expr = self.current_expr + access.instr.target_value + self.emulator.flags.C # type: ignore
+            self.current_expr = self.current_expr + sp.Integer(access.instr.target_value) + sp.Integer(self.emulator.flags.C)
+            
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
+    
+    def adcb(self, access: MemAccess):
+        if self.new_calc_register == "B":
+            self.raw_calculations.append(f" + {access.instr.target_value} + {self.emulator.flags.C}")
+            self.current_expr = self.current_expr + sp.Integer(access.instr.target_value) + sp.Integer(self.emulator.flags.C)
             
             self.calc_register_involed = True
         else:
@@ -762,8 +897,12 @@ class CalcInstructionParser:
 
     def subb(self, access: MemAccess):
         if self.new_calc_register == "B":
-            self.raw_calculations.append(f" - {access.instr.target_value}")
-            self.current_expr = self.current_expr - access.instr.target_value # type: ignore
+            # TODO Alle müssen so umgestellt werden, manchmal ist es der Inhalt der Variblen, nicht die Adresse selbst
+            self.raw_calculations.append(f" - {access.value}")
+
+            self.current_expr = self.current_expr - sp.Integer(access.value)
+            #self.raw_calculations.append(f" - {access.instr.target_value}")
+            #self.current_expr = self.current_expr - sp.Integer(access.instr.target_value)
 
             self.calc_register_involed = True
         else:
@@ -821,6 +960,8 @@ class CalcInstructionParser:
             if self.multi_step_complement == TwoStepComplement.INVERT:
                 # If we had an invert before, we need to adjust the calculation
                 # ~(x) + 1  == -x
+
+                self.raw_calculations.append(f" ... -{self.current_expr} instead of +1 and inverting")
                 self.current_expr = -self.current_expr # type: ignore
                 self.multi_step_complement = TwoStepComplement.NONE
             else:
@@ -828,7 +969,18 @@ class CalcInstructionParser:
 
             self.calc_register_involed = True
         elif self.rom_cfg.address_by_name('print_-_sign') == access.instr.target_value:
+            # if self.multi_step_complement == ThreeStepComplement.NEGATE:
+            #     # If we had a negate before
+            #     # -x -> x, so remove the negate
+            #     self.multi_step_complement = ThreeStepComplement.NONE
+            #     self.raw_calculations.append(" don't set -sign flag (negate removal)")
+            # else:
+
+            self.current_expr = -self.current_expr
+                
             self.neg_flag_val = 1
+            self.raw_calculations.append(" negate and set -sign flag")
+            self.calc_register_involed = False
         else:
             self.calc_register_involed = False
     
@@ -938,7 +1090,34 @@ class CalcInstructionParser:
             
             self.calc_register_involed = True
         elif self.rom_cfg.address_by_name('print_-_sign') == access.instr.target_value:
-            self.neg_flag_val = 0
+            # NOTE: Only remove the flag for non-zero values
+            # TODO der soll hier gucken, ob der aktuell errechnete Wert 0 ist oder nicht, aber wie?? 
+            # prüfen ob der Wert aktuell in einem Register steht? Und wenn in einer Variable?
+            current_value = None
+
+            if self.new_calc_register is not None:
+                current_value = getattr(self.saved_registers, self.new_calc_register)
+
+            if current_value is not None and current_value == 0:
+                self.raw_calculations.append(" - sign wird nicht gecleart/geändert, weil der aktuelle Wert 0 ist")
+            # elif self.multi_step_complement == ThreeStepComplement.NEGATE:
+            #     # If we had a negate before
+            #     # -x -> x, so remove the negate
+            #     self.multi_step_complement = ThreeStepComplement.NONE
+            #     self.raw_calculations.append(" don't clr -sign flag (negate removal)")
+            else:
+                if self.neg_flag_val == 1:
+                    self.raw_calculations.append(f" clr - sign and negate: -({self.current_expr})")
+
+                    self.neg_flag_val = 0
+
+                    # TODO Test
+                    self.current_expr = -self.current_expr
+                elif self.neg_flag_val == 0:
+                    self.raw_calculations.append(" clr - sign, don't negate as - sign was not set")
+                else:
+                    raise NotImplementedError("neg_flag_val  > 1 not implemented yet.")
+            self.calc_register_involed = False
         else:
             self.calc_register_involed = False
 
@@ -1014,6 +1193,33 @@ class CalcInstructionParser:
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False
+
+    def bita(self, access: MemAccess):
+        if self.new_calc_register == "A" or self.old_calc_register == "A":
+            self.raw_calculations.append(f" & {access.instr.target_value} for bit test")
+            
+            assert self.current_expr is not None
+            assert access.instr.target_value is not None
+            self.last_tested_expr = sp.And(self.current_expr, access.instr.target_value) # type: ignore
+            self.calc_register_involed = True
+
+            # TODO Dirty hack for now, SVX96 @0x87BA: checked for bit, but afterwards a isn't relevant anymore
+            # might also match on other cases
+            #self.new_calc_register = None
+        else:
+            self.calc_register_involed = False
+
+    def bitb(self, access: MemAccess):
+        if self.new_calc_register == "B" or self.old_calc_register == "B":
+            self.raw_calculations.append(f" & {access.instr.target_value} for bit test")
+            
+            assert self.current_expr is not None
+            assert access.instr.target_value is not None
+            self.last_tested_expr = sp.And(self.current_expr, access.instr.target_value) # type: ignore
+            self.calc_register_involed = True
+
+        else:
+            self.calc_register_involed = False
     
     def beq(self, access: MemAccess):
         if self.calc_register_involed:
@@ -1021,10 +1227,10 @@ class CalcInstructionParser:
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
             if self._branch_condition_met(access):
-                self.raw_calculations.append(f" if {test_expression} == {test_value}")
+                self.raw_calculations.append(f" beq test met: {test_expression} == {test_value}")
                 cond = sp.Eq(test_expression, test_value)
             else:
-                self.raw_calculations.append(f" if {test_expression} != {test_value}")
+                self.raw_calculations.append(f" beq test not met: {test_expression} != {test_value}")
                 cond = sp.Ne(test_expression, test_value)
             self.conditions.append(cond)
     
@@ -1034,10 +1240,10 @@ class CalcInstructionParser:
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
             if self._branch_condition_met(access):
-                self.raw_calculations.append(f" if {test_expression} != {test_value}")
+                self.raw_calculations.append(f" bne test met: {test_expression} != {test_value}")
                 cond = sp.Ne(test_expression, test_value)
             else:
-                self.raw_calculations.append(f" if {test_expression} == {test_value}")
+                self.raw_calculations.append(f" bne test not met: {test_expression} == {test_value}")
                 cond = sp.Eq(test_expression, test_value)
             self.conditions.append(cond)
 
@@ -1047,10 +1253,10 @@ class CalcInstructionParser:
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
             if self._branch_condition_met(access):
-                self.raw_calculations.append(f" if {test_expression} >= {test_value}")
+                self.raw_calculations.append(f" bcc test met: {test_expression} >= {test_value}")
                 cond = sp.Ge(test_expression, test_value)
             else:
-                self.raw_calculations.append(f" if {test_expression} < {test_value}")
+                self.raw_calculations.append(f" bcc test not met: {test_expression} < {test_value}")
                 cond = sp.Lt(test_expression, test_value)
             self.conditions.append(cond)
             
@@ -1062,10 +1268,10 @@ class CalcInstructionParser:
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
             if self._branch_condition_met(access):
-                self.raw_calculations.append(f" if {test_expression} < {test_value}")
+                self.raw_calculations.append(f" bcs test met: {test_expression} < {test_value}")
                 cond = sp.Lt(test_expression, test_value)
             else:
-                self.raw_calculations.append(f" if {test_expression} >= {test_value}")
+                self.raw_calculations.append(f" bcs test not met: {test_expression} >= {test_value}")
                 cond = sp.Ge(test_expression, test_value)
             self.conditions.append(cond)
 
@@ -1075,10 +1281,10 @@ class CalcInstructionParser:
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
             if self._branch_condition_met(access):
-                self.raw_calculations.append(f" if {test_expression} >= {test_value}")
+                self.raw_calculations.append(f" bpl test is '{test_expression}' >= {test_value}")
                 cond = sp.Ge(test_expression, test_value)
             else:
-                self.raw_calculations.append(f" if {test_expression} < {test_value}")
+                self.raw_calculations.append(f" bpl test is '{test_expression}' < {test_value}")
                 cond = sp.Lt(test_expression, test_value)
             self.conditions.append(cond)
 
@@ -1088,10 +1294,10 @@ class CalcInstructionParser:
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
             if self._branch_condition_met(access):
-                self.raw_calculations.append(f" if {test_expression} < {test_value}")
+                self.raw_calculations.append(f" bmi test met: {test_expression} < {test_value}")
                 cond = sp.Lt(test_expression, test_value)
             else:
-                self.raw_calculations.append(f" if {test_expression} >= {test_value}")
+                self.raw_calculations.append(f" bmi test not met: {test_expression} >= {test_value}")
                 cond = sp.Ge(test_expression, test_value)
             self.conditions.append(cond)
 
@@ -1101,11 +1307,24 @@ class CalcInstructionParser:
             test_value = self._get_reset_test_value()
             test_expression = self._get_reset_test_expression()
             if self._branch_condition_met(access):
-                self.raw_calculations.append(f" if {test_expression} >= {test_value}")
+                self.raw_calculations.append(f" bge test met: {test_expression} >= {test_value}")
                 cond = sp.Ge(test_expression, test_value)
             else:
-                self.raw_calculations.append(f" if {test_expression} < {test_value}")
+                self.raw_calculations.append(f" bge test not met: {test_expression} < {test_value}")
                 cond = sp.Lt(test_expression, test_value)
+            self.conditions.append(cond)
+    
+    def bls(self, access: MemAccess):
+        if self.calc_register_involed:
+            self.value_depended_branches = True
+            test_value = self._get_reset_test_value()
+            test_expression = self._get_reset_test_expression()
+            if self._branch_condition_met(access):
+                self.raw_calculations.append(f" bls test met: {test_expression} <= {test_value}")
+                cond = sp.Le(test_expression, test_value)
+            else:
+                self.raw_calculations.append(f" bls test not met: {test_expression} > {test_value}")
+                cond = sp.Gt(test_expression, test_value)
             self.conditions.append(cond)
 
     def bra(self, access: MemAccess):
@@ -1127,7 +1346,7 @@ class CalcInstructionParser:
                 func_name = f" [{func_name.name}]"
             else:
                 func_name = ""
-            logger.debug(f"Skipping JSR to 0x{access.instr.target_value:04X}{func_name} at address 0x{access.instr.address:04X}")
+            logger.info(f"Skipping JSR to 0x{access.instr.target_value:04X}{func_name} at address 0x{access.instr.address:04X}")
 
         self.jsr_level += 1
 

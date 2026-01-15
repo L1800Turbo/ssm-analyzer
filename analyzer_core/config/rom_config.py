@@ -1,6 +1,6 @@
 from enum import Enum, auto
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, Union
 
 #from analyzer_core.analyze.lookup_table_helper import LookupTable
 from analyzer_core.analyze.repo import PatternRepository

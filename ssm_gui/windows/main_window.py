@@ -30,6 +30,8 @@ from pathlib import Path
 
 DEFAULT_ROM_FOLDER = "./ressources"
 
+logger = logging.getLogger(__name__)
+
 class QTextEditLogger(logging.Handler):
     LEVEL_COLORS = {
         logging.DEBUG: "gray",
@@ -163,7 +165,10 @@ class MainWindow(QMainWindow):
         # TODO: Abfrage einbauen if not analyzed yet, analyze
         current_service: RomService = self.rom_services[self.rom_select.currentData()]
 
-        current_service.analyze()
+        try:
+            current_service.analyze()
+        except Exception as e:
+            logger.error(f"Exception in analyzer: {str(e)}")
 
         self.asm_viewer.set_rom_service(current_service)
         self.asm_viewer.build_current_rom_ui()
