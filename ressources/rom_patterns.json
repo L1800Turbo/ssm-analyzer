@@ -511,6 +511,31 @@
         { "mnemonic": "cmpa", "op_str": "0x20" }
       ],
       "description": "IMPREZA96 @0xB7BA: Print plus or minus sign based on value"
+    },
+    {
+      "name": "save_count_rx_value_fifo",
+      "pattern": [
+        { "mnemonic": "ldab", "op_str": "REF{current_lower_label_index}" },
+        { "mnemonic": "andb", "op_str": "#$0F" },
+        { "mnemonic": "stab", "op_str": "VAR{bufferBreite}" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "ldaa", "op_str": "REF{ssm_rx_byte_2}" },
+        { "mnemonic": "staa" },
+        { "mnemonic": "tst", "op_str": "VAR{CC_flag_clear_RX_FIFO}" },
+        { "mnemonic": "bne" },
+        {"max_skip": 15, "min_skip": [13]},
+        { "mnemonic": "clr" },
+        { "mnemonic": "ldx" },
+        { "mnemonic": "inc" },
+        { "mnemonic": "ldaa" },
+        { "mnemonic": "cmpa", "op_str": "VAR{buffered_ssm_rx_byte_2}" },
+        {"max_skip": 18, "min_skip": [13]},
+        { "mnemonic": "stab"},
+        { "mnemonic": "inc", "op_str": "VAR{collect_rx_fifo_in_progress}" },
+        { "mnemonic": "clr"},
+        { "mnemonic": "bra"}
+      ],
+      "description": "SVX96 CC @0x379C: A FIFO buffer is used to store multiple received SSM values."
     }
   ],
   "strings": {

@@ -330,7 +330,7 @@ class Emulator6303:
 
             asm_step: MemAccess = func(instr)
 
-            if instr.address == 0x2A59:
+            if instr.address == 0x3728:
                 pass
 
             if instr.address == 0x2B75: # DIO1 bei 0x2C36 für 4AT könnte auch noch komisch werden -> romid3 abhängig

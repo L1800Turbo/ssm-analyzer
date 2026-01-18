@@ -100,8 +100,8 @@ class RomIdTableAnalyzer:
             entry_analyzer.request_romid_and_capture(current_device)
 
 
-            if current_device != CurrentSelectedDevice.AC:
-               continue 
+            #if current_device != CurrentSelectedDevice.CC:
+            #   continue 
 
 
 

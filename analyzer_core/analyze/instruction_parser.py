@@ -70,7 +70,8 @@ class CalcInstructionParser:
             "print_upper_screen": lambda access: None,
             "print_lower_value": lambda access: None,
             "print_sign": lambda access: None,
-            "copy_to_lower_screen_buffer_unit": lambda access: None,
+            "copy_to_lower_screen_buffer_unit": self._copy_to_lower_screen_buffer_unit,
+            "save_count_rx_value_fifo": self._save_count_rx_value_fifo,
         }
         self.mock_function_ptrs: dict[int, Callable[[MemAccess], None]] = {}
         for fn_name, func in mock_function_names.items():
@@ -85,13 +86,16 @@ class CalcInstructionParser:
 
         # How many lookup tables were found in all function runs
         self.found_luts : int = 0
+        self.print_unit_called = False
+
 
         self.init_new_instruction()
 
 
-    def init_new_instruction(self):
+    def init_new_instruction(self):        
         self.new_calc_address = None
         self.new_calc_register = None
+        self.new_calc_register_pushed = None
         self.old_calc_register = None # TODO zunächst für bita SVX96
 
         self.raw_calculations: list[str] = []
@@ -325,7 +329,7 @@ class CalcInstructionParser:
                 item_size=factor,
                 possible_index_values=possible_idx_vals) # TODO size noch dynamisch, wird immer 0,x genommen so
         
-            print(f"Lookup table creation to address 0x{self.lut_access.get_lut_address():04X} with index {self.current_expr}", flush=True)
+            print(f"Lookup table creation to address 0x{self.lut_access.get_lut_address():04X} with index {index_var}", flush=True)
 
             self.rom_cfg.lookup_tables[table_name] = lut
 
@@ -333,6 +337,7 @@ class CalcInstructionParser:
             self.rom_cfg.add_lut(table_name, self.lut_access.get_lut_address(), factor * max(possible_idx_vals), current_device=self.emulator.current_device)
             self.found_luts += 1
 
+        # TODO lut_expr und index_var: ist das nicht doppelt?
         self.raw_calculations.append(f"[{self.lut_access.lut_expr}] -> LUT(addr=0x{self.lut_access.get_lut_address():04X})")
         self.current_expr = lut(index_var)  # type: ignore
         
@@ -407,8 +412,8 @@ class CalcInstructionParser:
                     return list(range(sp.Integer(sp.Integer(rel.rhs) + 1)))
                 elif isinstance(rel, sp.Lt) and rel.lhs.is_Symbol and rel.rhs.is_Integer:
                     return list(range(sp.Integer(rel.rhs)))
-            else:
-                raise NotImplementedError(f"Only <= and < inequalities with symbol on lhs and integer on rhs are supported: {index_var}")
+            #else:
+            #    raise NotImplementedError(f"Only <= and < inequalities with symbol on lhs and integer on rhs are supported: {index_var}")
             return list(range(256))  # 8 Bit
         
         elif index_var.is_Integer:
@@ -590,9 +595,6 @@ class CalcInstructionParser:
         
         # If we write directly to the output buffer
         elif access.instr.target_value in self.hex_buffer:
-            # TODO nicht überschreiben
-            #self.new_calc_address = access.instr.target_value
-            #self.new_calc_register = None
 
             # First, get all buffer values out of memory
             buffer_values = []
@@ -614,9 +616,8 @@ class CalcInstructionParser:
             #self.raw_calculations.append(f"Overwriting hex_buffer[{idx}] with {self.saved_registers.D}, full buffer: {buffer_values}")
             
             
-            # Little Endian: niedrigstes Byte zuerst, höchstes zuletzt
             symbolic_value = sum(sp.Mod(val, 256) * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
-            self.current_expr = symbolic_value
+            self.current_expr = symbolic_value # type: ignore
             self.raw_calculations.append(f"Symbolic buffer value: {self.current_expr}")
 
             self.calc_register_involed = True
@@ -639,11 +640,6 @@ class CalcInstructionParser:
         else:
             test_expr = self.last_tested_expr
             self.last_tested_expr = None
-
-        # TODO TEST
-        # If we're currently using the inverted flag, we have to invert the condition as it won't happen afterwards
-        #if self.neg_flag_val == 1:
-        #    test_expr = -test_expr
         
         return test_expr
     
@@ -742,15 +738,39 @@ class CalcInstructionParser:
 
         # TODO: DAs reicht so nicht -> Der Fehlercode von TCS wird in HEX ausgegeben, ist aber nicht im Text enthalten, den müsste man also 
         # abhängig von index_to_ascii nochmal extra behandeln. Evtl. die Funktion dann mocken
+    
+    def _copy_to_lower_screen_buffer_unit(self, access: MemAccess):
+        # Only indicate that we wrote to the screen buffer
+        self.print_unit_called = True
+
+    def _save_count_rx_value_fifo(self, access: MemAccess):
+        # We called this function that saves the RX value to a FIFO buffer,
+        # so we need to adjust the SSM rx byte to a buffered variable
+        self.read_addresses = [self.rom_cfg.address_by_name("buffered_ssm_rx_byte_2")]
+        self.raw_calculations.append(f"Using buffered SSM RX byte from address {self.read_addresses[0]} for further calculations.")
+
+        # Simulate clear the RX FIFO flag to let the function always run for the first time.
+        # In that case, it doesn't set a busy flag and the scaling function can proceed.
+        self.emulator.mem.write(self.rom_cfg.address_by_name("CC_flag_clear_RX_FIFO"), 0)
+        
 
 
     # --- Instruction handlers ---
 
     def psha(self, access: MemAccess):
-        pass
+        if self.new_calc_register == "A":
+            self.raw_calculations.append(f" PSHA {access.value}")
+            self.new_calc_register_pushed = "A"
+            self.calc_register_involed = True
+        else:
+            self.calc_register_involed = False
 
     def pula(self, access: MemAccess):
-        pass
+        if self.new_calc_register_pushed == "A":
+            self.raw_calculations.append(f" PULA {access.value}")
+            self.new_calc_register = "A"
+            self.new_calc_register_pushed = None
+            self.calc_register_involed = True
 
     def ldaa(self, access: MemAccess):
         self.set_target_from_var_to_register(access, "A")
@@ -822,8 +842,6 @@ class CalcInstructionParser:
                 # ~(x) + 1  == -x
                 self.current_expr = -self.current_expr
                 self.multi_step_complement = TwoStepComplement.NONE
-
-                #self.multi_step_complement = TwoStepComplement.NEGATE
             else:
                 check_for_division_rounding(access.instr.target_value)
                 
@@ -841,7 +859,6 @@ class CalcInstructionParser:
         elif self.__is_address_match(access.instr.target_value, self.new_calc_address):
             # Additional check for Lookup table access
             if self._check_for_rom_address(self.saved_registers.D):
-                #self.lut_address = self.saved_registers.D
                 self.lut_expr = self.current_expr
             else:
                 # Otherwise it could be a division rounding +5
@@ -857,8 +874,16 @@ class CalcInstructionParser:
     
     def subd(self, access: MemAccess):
         if self.new_calc_register == "D":
+            if self.neg_flag_val == 1:
+                # If we had a negate before, we need to adjust the calculation
+                self.raw_calculations.append(f" Negate, substract and negate again")
+                self.current_expr = -self.current_expr
+
             self.raw_calculations.append(f" - {access.instr.target_value}")
             self.current_expr = self.current_expr - sp.Integer(access.instr.target_value)
+
+            if self.neg_flag_val == 1:
+                self.current_expr = -self.current_expr
 
             self.calc_register_involed = True
         elif self.new_calc_register == "B":
@@ -869,8 +894,16 @@ class CalcInstructionParser:
         elif self.new_calc_register == "A":
             raise NotImplementedError("subd handling for A register alone not implemented yet.")
         elif self.__is_address_match(access.instr.target_value, self.new_calc_address):
-            self.raw_calculations.append(f" {self.saved_registers.D} - ")
+            if self.neg_flag_val == 1:
+                # If we had a negate before, we need to adjust the calculation
+                self.raw_calculations.append(f" Negate, substract and negate again")
+                self.current_expr = -self.current_expr
+            
+            self.raw_calculations.append(f" {self.saved_registers.D} - new_calc_address pointer ")
             self.current_expr = sp.Integer(self.saved_registers.D) - self.current_expr
+
+            if self.neg_flag_val == 1:
+                self.current_expr = -self.current_expr
 
             self.new_calc_register = "D"
             self.calc_register_involed = True
@@ -901,8 +934,6 @@ class CalcInstructionParser:
             self.raw_calculations.append(f" - {access.value}")
 
             self.current_expr = self.current_expr - sp.Integer(access.value)
-            #self.raw_calculations.append(f" - {access.instr.target_value}")
-            #self.current_expr = self.current_expr - sp.Integer(access.instr.target_value)
 
             self.calc_register_involed = True
         else:
@@ -913,7 +944,7 @@ class CalcInstructionParser:
 
         if self.new_calc_register == "D":
             # We use the double register, but only use B here, only take the lower byte of D
-            self.raw_calculations.append(" & 0xFF")
+            self.raw_calculations.append(" & 0xFF (from abx)")
 
             # From now on, only take B
             self.new_calc_register = "B"
@@ -921,6 +952,8 @@ class CalcInstructionParser:
         if self.new_calc_register == "B":            
             self.new_calc_register = "X"
             self.calc_register_involed = True
+
+            self.raw_calculations.append(f" + {self.saved_registers.X} (abx)")
 
             
     
@@ -969,12 +1002,6 @@ class CalcInstructionParser:
 
             self.calc_register_involed = True
         elif self.rom_cfg.address_by_name('print_-_sign') == access.instr.target_value:
-            # if self.multi_step_complement == ThreeStepComplement.NEGATE:
-            #     # If we had a negate before
-            #     # -x -> x, so remove the negate
-            #     self.multi_step_complement = ThreeStepComplement.NONE
-            #     self.raw_calculations.append(" don't set -sign flag (negate removal)")
-            # else:
 
             self.current_expr = -self.current_expr
                 
@@ -1190,6 +1217,10 @@ class CalcInstructionParser:
     def tsta(self, access: MemAccess):
         if self.new_calc_register == "A":
             self.last_tested_expr = self.current_expr
+            self.calc_register_involed = True
+        elif self.new_calc_register == "D":
+            self.raw_calculations.append(" test hi byte of calc register D ")
+            self.last_tested_expr = self.current_expr // 256 # type: ignore
             self.calc_register_involed = True
         else:
             self.calc_register_involed = False

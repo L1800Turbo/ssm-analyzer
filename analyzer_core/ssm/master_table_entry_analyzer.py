@@ -213,6 +213,9 @@ class MasterTableEntryAnalyzer:
 
                 if self.mt_entry.action is None:
                     raise RuntimeError("MasterTableEntry action should be defined by now...")
+                
+                action_scaling_helper.run_post_actions()
+
                 if action_scaling_helper.use_switches_mode:
                     self.mt_entry.action.switches = action_scaling_helper.get_switch_definitions()
                 else:

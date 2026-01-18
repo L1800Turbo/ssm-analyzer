@@ -44,7 +44,6 @@ class SsmActionScalingFunction(SsmActionHelper):
         logger.debug(f"Running Scaling Function for MT Entry '{mt_entry.item_label}' {mt_entry.menu_item_str()} with scaling index {mt_entry.scaling_index}")
 
         self._ensure_scaling_disassembly()
-        self._set_unit()
         self._add_function_mocks()
 
         # TODO hier auch dann Listen mit mehreren addresses
@@ -239,7 +238,7 @@ class SsmActionScalingFunction(SsmActionHelper):
                 logger.warning(f"Scaling function at 0x{self.scaling_fn_ptr:04X} has no item label.")
             return
         
-        if self.scaling_fn_ptr == 0x25FF:
+        if self.scaling_fn_ptr == 0x26A9:
             pass
         
         # Also, save it as a global function address
@@ -312,6 +311,11 @@ class SsmActionScalingFunction(SsmActionHelper):
 
 
         # TODO Abfrage rein, ob in der final nicht wenigstens eine True bedingung ist? ansonsten wären ja Werte ungültig...
+
+        # The unit will be set during emulation, if not, the function shouldn't be called as the lower label index could be
+        # used for another purpose, e.g. SVX96 CCU
+        if self.instr_parser.print_unit_called is True:
+            self._set_unit()
 
         # Check if we are in Switches mode where we don't need a static scaling but the switch values
         # Switches are already handled in the mocks above
