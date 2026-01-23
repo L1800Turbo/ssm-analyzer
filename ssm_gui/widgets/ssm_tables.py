@@ -9,21 +9,21 @@ from PyQt6.QtWidgets import (
     QTabWidget, QTreeView, QSizePolicy
 )
 
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo, MasterTableInfo, SsmAction
-from typing import cast
-from analyzer_core.service import RomService
-from ssm_gui.models.action_table_model import ActionTableModel
-from ssm_gui.models.master_table_model import MasterTableModel
+from analyzer_core.config.ssm_model import CurrentSelectedDevice
+from typing import Optional, cast
+from analyzer_core.data.romid_tables import RomIdTableCollector, SimpleMasterTable
+from ssm_gui.models.lookup_table_model import LookupTableModel
+from ssm_gui.models.measurements_model import MeasurementsModel
 from ssm_gui.models.romid_table_model import RomIdTableModel
 
 
 class SsmTablesWidget(QWidget):
-    def __init__(self, rom_services: dict[Path, RomService]):
+    def __init__(self, romid_tables: RomIdTableCollector):
         super().__init__()
 
         self.logger = logging.getLogger(f"{__name__}")
 
-        self.rom_services = rom_services
+        self.romid_tables = romid_tables
 
         self.__create_ui()
 
@@ -58,28 +58,29 @@ class SsmTablesWidget(QWidget):
         #self.romid_table.horizontalHeader().setStretchLastSection(True)
         splitter.addWidget(self.romid_table_view)
 
-        self.master_table_view = QTableView()
-        self.master_table_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.master_table_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.master_table_model = MasterTableModel()
-        self.master_table_view.setModel(self.master_table_model)
-        splitter.addWidget(self.master_table_view)
+        self.measurement_view = QTableView()
+        self.measurement_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.measurement_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.measurement_model = MeasurementsModel()
+        self.measurement_view.setModel(self.measurement_model)
+        splitter.addWidget(self.measurement_view)
 
-        self.action_view = QTableView()
-        self.action_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.action_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.action_model = ActionTableModel()
-        self.action_view.setModel(self.action_model)
-        splitter.addWidget(self.action_view)
+        self.lookup_table_view = QTableView()
+        self.lookup_table_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.lookup_table_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.lookup_table_model = LookupTableModel()
+        self.lookup_table_view.setModel(self.lookup_table_model)
+        splitter.addWidget(self.lookup_table_view)
 
 
 
         romid_table_selection_model = self.romid_table_view.selectionModel()
         if romid_table_selection_model: 
             romid_table_selection_model.selectionChanged.connect(self._on_romid_table_changed)
-        master_table_selection_model = self.master_table_view.selectionModel()
-        if master_table_selection_model:
-            master_table_selection_model.selectionChanged.connect(self._on_master_table_changed)
+        
+        measurement_selection_model = self.measurement_view.selectionModel()
+        if measurement_selection_model:
+            measurement_selection_model.selectionChanged.connect(self._on_measurement_selection_changed)
 
     def reshesh_select_ecu(self):
         # TODO workaround, erstmal eine ROM, später erhänzen
@@ -90,10 +91,10 @@ class SsmTablesWidget(QWidget):
         #self._on_romid_table_changed(-1)
         #self.romid_table = None
         self.selected_romid_entry = None
-        self.refresh_master_table()
+        self.refresh_measurements_table()
 
-        self.selected_master_table_entry = None
-        self.refresh_action_table()
+        #self.selected_master_table_entry = None
+        #self.refresh_action_table()
 
         self.refresh_romid_table()
 
@@ -105,110 +106,138 @@ class SsmTablesWidget(QWidget):
         sel_model = self.romid_table_view.selectionModel()
         if sel_model is None:
             self.selected_romid_entry = None
-            self.refresh_master_table()
+            self.refresh_measurements_table()
             return
 
         rows = sel_model.selectedRows()
         if not rows:
             self.selected_romid_entry = None
-            self.refresh_master_table()
+            self.refresh_measurements_table()
             return
 
         row = rows[0].row()
         # guard: ensure we have a romid_table and entries
-        if not hasattr(self, "romid_table") or self.romid_table is None:
+        if not hasattr(self, "current_romid_table") or self.current_romid_table is None:
             self.selected_romid_entry = None
-            self.refresh_master_table()
+            self.refresh_measurements_table()
             return
 
-        if row < 0 or row >= len(self.romid_table.entries):
+        if row < 0 or row >= len(self.current_romid_table):
             self.selected_romid_entry = None
-            self.refresh_master_table()
+            self.refresh_measurements_table()
             return
 
-        self.selected_master_table_entry = None
-        self.refresh_action_table()
+        #self.selected_master_table_entry = None
+        #self.refresh_action_table()
 
-        self.selected_romid_entry = self.romid_table.entries[row]
-        self.refresh_master_table()
+        self.selected_romid_entry = list(self.current_romid_table.items())[row][1]
+        self.refresh_measurements_table()
+
+    def _on_measurement_selection_changed(self, selected, deselected):
+        # Hole die aktuelle Zeile aus der Auswahl
+        indexes = selected.indexes()
+        if indexes:
+            row = indexes[0].row()
+            lookup_table = self.measurement_model.get_lookup_table_for_row(row)
+            self.lookup_table_model.setLut(lookup_table or {})
+        else:
+            self.lookup_table_model.setLut({})  # Leere Tabelle, falls nichts ausgewählt
 
         
 
-    def _on_master_table_changed(self, index:int):
-        '''
-        Master table changed, load the matching action
-        '''
-        sel_model = self.master_table_view.selectionModel()
-        if sel_model is None:
-            self.selected_master_table_entry = None
-            self.refresh_action_table()
-            return
+    # def _on_master_table_changed(self, index:int):
+    #     '''
+    #     Master table changed, load the matching action
+    #     '''
+    #     sel_model = self.measurement_view.selectionModel()
+    #     if sel_model is None:
+    #         self.selected_master_table_entry = None
+    #         self.refresh_action_table()
+    #         return
         
-        rows = sel_model.selectedRows()
-        if not rows:
-            self.selected_master_table_entry = None
-            self.refresh_action_table()
-            return
+    #     rows = sel_model.selectedRows()
+    #     if not rows:
+    #         self.selected_master_table_entry = None
+    #         self.refresh_action_table()
+    #         return
         
-        row = rows[0].row()
-        # guard: ensure we have a master_table and entries
-        if not hasattr(self.master_table_model, "master_table") or self.master_table_model.master_table is None:
-            self.selected_master_table_entry = None
-            self.refresh_action_table()
-            return
+    #     row = rows[0].row()
+    #     # guard: ensure we have a master_table and entries
+    #     if not hasattr(self.master_table_model, "master_table") or self.master_table_model.master_table is None:
+    #         self.selected_master_table_entry = None
+    #         self.refresh_action_table()
+    #         return
 
-        if row < 0 or row >= len(self.master_table_model.master_table.entries):
-            self.selected_master_table_entry = None
-            self.refresh_action_table()
-            return
+    #     if row < 0 or row >= len(self.master_table_model.master_table.entries):
+    #         self.selected_master_table_entry = None
+    #         self.refresh_action_table()
+    #         return
 
-        self.selected_master_table_entry = self.master_table_model.master_table.entries[row]
-        self.refresh_action_table()
+    #     self.selected_master_table_entry = list(self.master_table_model.master_table.entries.values())[row]
+    #     self.refresh_action_table()
 
     
     def refresh_romid_table(self):
         device = self.device_select.currentData()
 
-        for rom_path, ecu in self.rom_services.items():
-            self.romid_table = ecu.rom_cfg.romid_tables.get(device)
+        self.current_romid_table = self.romid_tables.romid_tables.get(device)
+        if self.current_romid_table:
+                self.romid_table_model.setRomIdTable(self.current_romid_table)
+        else:
+            self.romid_table_model.setRomIdTable({})
 
-            if self.romid_table:
-                self.romid_table_model.setRomIdTable(self.romid_table)
-            #if romid_info:
-            #   self.romid_model.setRomIdTable(romid_info)
-            #   self.romid_table.resizeColumnsToContents()
+        # TODO Folgende Anpassungen sind notwendig:
+        # - eine Funktion, die alle RomID-Tables zusammenfasst (aus allen RomServices)
+        # - dann das Modell ausgeben
+        # - aber vermutlich ein Level höher, nciht hier in widget
 
-            # TODO Es sollte eine Oberklasse über Service geben, die letztlich alle Infromationen zusammen sammelt
+        # for rom_path, ecu in self.rom_services.items():
+        #     self.current_romid_table = ecu.rom_cfg.romid_tables.get(device)
 
-            self.logger.warning("TODO: Nur eine RomIDtabelle bis jetzt")
-            return
-        
-    def refresh_master_table(self):
-        entry = getattr(self, "selected_romid_entry", None)
-        if entry is None:
-            self.master_table_model.setMasterTable(cast(MasterTableInfo, None))
-            return
+        #     if self.current_romid_table:
+        #         self.romid_table_model.setRomIdTable(self.current_romid_table)
+        #     #if romid_info:
+        #     #   self.romid_model.setRomIdTable(romid_info)
+        #     #   self.romid_table.resizeColumnsToContents()
 
-        master = getattr(entry, "master_table", None)
-        if master is None:
-            self.master_table_model.setMasterTable(cast(MasterTableInfo, None))
+        #     # TODO Es sollte eine Oberklasse über Service geben, die letztlich alle Infromationen zusammen sammelt
+
+        #     self.logger.warning("TODO: Nur eine RomIDtabelle bis jetzt")
+        #     return
+
+    def refresh_measurements_table(self):
+        master_table: Optional[SimpleMasterTable] = getattr(self, "selected_romid_entry", None)
+        if master_table is None or master_table.measurements is None:
+            self.measurement_model.setMeasurements({})
             return
 
         # master is expected to be a MasterTableInfo instance
-        self.master_table_model.setMasterTable(master)
-        self.master_table_view.resizeColumnsToContents()
+        self.measurement_model.setMeasurements(master_table.measurements)
+        self.measurement_view.resizeColumnsToContents()
+        
+    # def refresh_master_table(self):
+    #     master_table = getattr(self, "selected_romid_entry", None)
+    #     if master_table is None:
+    #         self.master_table_model.setMasterTable(cast(SimpleMasterTable, None))
+    #         return
+
+
+    #     # master is expected to be a MasterTableInfo instance
+    #     self.master_table_model.setMasterTable(master_table)
+    #     self.master_table_view.resizeColumnsToContents()
     
-    def refresh_action_table(self):
-        entry = getattr(self, "selected_master_table_entry", None)
-        if entry is None:
-            self.action_model.setAction(cast(SsmAction, None))
-            return
+    # def refresh_action_table(self):
+    #     # TODO Diese hier sollte dann komplett zwischen Switch / Scaling / Diag /... unterscheiden
+    #     entry = getattr(self, "selected_master_table_entry", None)
+    #     if entry is None:
+    #         self.action_model.setScaling(cast(SimpleScaling, None))
+    #         return
 
-        action = getattr(entry, "action", None)
-        if action is None:
-            self.action_model.setAction(cast(SsmAction, None))
-            return
+    #     action = getattr(entry, "action", None)
+    #     if action is None:
+    #         self.action_model.setScaling(cast(SimpleScaling, None))
+    #         return
 
-        # action is expected to be a SsmAction instance
-        self.action_model.setAction(action)
-        self.action_view.resizeColumnsToContents()
+    #     # action is expected to be a SsmAction instance
+    #     self.action_model.setScaling(action)
+    #     self.action_view.resizeColumnsToContents()

@@ -22,6 +22,7 @@
 import logging
 from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QStatusBar, QMenuBar, QMenu, QFileDialog, QTextEdit, QHBoxLayout, QLabel, QComboBox, QPushButton
 from PyQt6.QtGui import QAction
+from analyzer_core.data.romid_tables import RomIdTableCollector
 from ssm_gui.widgets.asm_viewer import AsmViewerWidget
 from ssm_gui.widgets.rom_catalog import RomCatalogWidget
 from ssm_gui.widgets.ssm_tables import SsmTablesWidget
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         #
         #self.rom_service = RomService()
         self.rom_services: dict[Path, RomService] = {}
+        self.romid_tables = RomIdTableCollector()
 
         # Menu bar
         menu_bar = QMenuBar(self)
@@ -100,7 +102,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.asm_viewer, "Analysis")
         self.rom_catalog = RomCatalogWidget(self.rom_services)
         self.tabs.addTab(self.rom_catalog, "ROM Import/Info")
-        self.ssm_tables = SsmTablesWidget(self.rom_services)
+        self.ssm_tables = SsmTablesWidget(self.romid_tables)
         self.tabs.addTab(self.ssm_tables, "SSM tables")
 
         # Refresh info about analyzed roms
@@ -172,6 +174,9 @@ class MainWindow(QMainWindow):
 
         self.asm_viewer.set_rom_service(current_service)
         self.asm_viewer.build_current_rom_ui()
+
+        # Add into global RomID safe:
+        self.romid_tables.add_ssm_cassette(current_service.rom_cfg.romid_tables)
 
         # Refresh info tree with ROM information
         # TODO hier auch set_rom_service machen?

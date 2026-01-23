@@ -1,15 +1,12 @@
-# SsmModel
-# RomIdTableInfo, MasterTableInfo, Label/Scaling Metadaten.
-
-
 from dataclasses import dataclass, field
 from enum import IntEnum
 import struct
 from typing import Optional, Union
 import sympy as sp
 
-# Circular imports avoided
-# from analyzer_core.ssm.action_functions.action_helper import SsmAction
+'''
+Model definitions close to the SSM ROM structure
+'''
 
 class RomEmulationError(Exception):
     pass

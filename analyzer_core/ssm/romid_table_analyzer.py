@@ -99,9 +99,9 @@ class RomIdTableAnalyzer:
             # request romid to capture hardcoded values (may prune protocols etc.)
             entry_analyzer.request_romid_and_capture(current_device)
 
-
-            #if current_device != CurrentSelectedDevice.CC:
-            #   continue 
+            # TODO egi nehemn
+            if current_device != CurrentSelectedDevice.EGI:
+               continue 
 
 
 

@@ -412,7 +412,7 @@ class Emulator6303:
         
         self.last_run_steps = steps
 
-        print(f"Emulated steps from {start_pc:04X}: {steps}")
+        #print(f"Emulated steps from {start_pc:04X}: {steps}")
 
         return last_step
 

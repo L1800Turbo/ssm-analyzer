@@ -486,8 +486,11 @@ class CalcInstructionParser:
         for expr, conds in grouped.items():
             symplified_conds = []
             for cond in conds:
-                #symplified_conds.append(sp.simplify(self._fast_simplify_condition(cond))) # TODO funktioniert nicht bei SVX96 AC 0x2566
-                symplified_conds.append(sp.simplify(cond)) # type: ignore
+                if isinstance(cond, sp.And) and all(isinstance(arg, sp.Ne) for arg in cond.args):
+                    symplified_conds.append(self._fast_simplify_condition(cond))
+                else:
+                   symplified_conds.append(sp.simplify(self._fast_simplify_condition(cond))) # TODO funktioniert nicht bei SVX96 AC 0x2566
+                #symplified_conds.append(sp.simplify(cond)) # type: ignore
             condition = sp.Or(*symplified_conds)
             #simplified_condition = sp.simplify(condition, force=True)
             simplified_condition = self._fast_simplify_condition(condition) # type: ignore
@@ -592,9 +595,13 @@ class CalcInstructionParser:
             
             self.raw_calculations.append(str(self.saved_registers.D))
             self.current_expr = sp.Integer(self.saved_registers.D)
-        
+        else:
+            self.calc_register_involed = False
+
         # If we write directly to the output buffer
-        elif access.instr.target_value in self.hex_buffer:
+        if access.instr.target_value in self.hex_buffer:
+
+            save_expr_okay = False
 
             # First, get all buffer values out of memory
             buffer_values = []
@@ -607,22 +614,31 @@ class CalcInstructionParser:
                 buffer_idx = self.hex_buffer.index(self.new_calc_address)
                 buffer_values[buffer_idx] = self.current_expr
 
+                # TODO aktuell nur speichern, wenn die expression ganz hinten ist
+                if buffer_idx == len(self.hex_buffer) -1:
+                    save_expr_okay = True
+
             # Then, set the value we manipulated here
-            idx = self.hex_buffer.index(access.instr.target_value)
-            buffer_values[idx] = getattr(self.saved_registers, register)
+            # TODO Das funktioniert so nochc nicht. Wir wissen ja gar nicht, ob wir etwas manipulieren wollen oder ob wir die current_expr
+            # behalten wollen
+            #idx = self.hex_buffer.index(access.instr.target_value)
+            #buffer_values[idx] = getattr(self.saved_registers, register)
 
 
             # Setze den aktuellen Ausdruck als Zusammensetzung aller Teile
             #self.raw_calculations.append(f"Overwriting hex_buffer[{idx}] with {self.saved_registers.D}, full buffer: {buffer_values}")
             
             
-            symbolic_value = sum(sp.Mod(val, 256) * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
-            self.current_expr = symbolic_value # type: ignore
+            #symbolic_value = sum(sp.Mod(val, 256) * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
+            symbolic_value = sum(val * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
+
+            # TODO Testen, nur überschreiben, wenn die expr. schon drin ist
+            if save_expr_okay:
+                self.current_expr = symbolic_value # type: ignore
+
             self.raw_calculations.append(f"Symbolic buffer value: {self.current_expr}")
 
             self.calc_register_involed = True
-        else:
-            self.calc_register_involed = False
     
     def _branch_condition_met(self, access: MemAccess) -> bool:
         ''' Return if the current branch condition is met by checking the next instruction address '''

@@ -3,6 +3,7 @@ from typing import Any
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
 
 from analyzer_core.config.ssm_model import RomIdTableEntry_512kb, RomIdTableInfo
+from analyzer_core.data.romid_tables import MastertableIdentifier, SimpleMasterTableEntry, SimpleMasterTable
 
 
 class RomIdTableModel(QAbstractTableModel):
@@ -10,15 +11,15 @@ class RomIdTableModel(QAbstractTableModel):
 
     HEADERS = ["RomID", "Model", "Year"]
 
-    def __init__(self, romid_table: RomIdTableInfo | None = None, parent=None):
+    def __init__(self, romid_table: dict[int | str, SimpleMasterTable] | None = None, parent=None):
         super().__init__(parent)
         self.romid_table = romid_table
 
     # --- Required overrides ---
     def rowCount(self, parent=QModelIndex()):
-        if not self.romid_table or not self.romid_table.entries:
+        if not self.romid_table:
             return 0
-        return len(self.romid_table.entries)
+        return len(self.romid_table)
 
     def columnCount(self, parent=QModelIndex()):
         return len(self.HEADERS)
@@ -29,13 +30,13 @@ class RomIdTableModel(QAbstractTableModel):
 
         if self.romid_table is None:
             return None
-        entry = self.romid_table.entries[index.row()]
+        entry = list(self.romid_table.values())[index.row()]
         col = index.column()
 
         mapping = {
-                0: f"{entry.romid0:02X} {entry.romid1:02X} {entry.romid2:02X}",
-                1: entry.ssm_model if entry.ssm_model else "",
-                2: entry.ssm_year if entry.ssm_year else "",
+                0: f"{entry.romid_str}",
+                1: entry.model if entry.model else "",
+                2: entry.year if entry.year else "",
             }
 
         value = mapping.get(col, "")
@@ -51,7 +52,7 @@ class RomIdTableModel(QAbstractTableModel):
             return str(section + 1)
 
     # --- Optional helpers ---
-    def setRomIdTable(self, romid_table: RomIdTableInfo):
+    def setRomIdTable(self, romid_table: dict[MastertableIdentifier, SimpleMasterTable]):
         """Replace table data and refresh."""
         self.beginResetModel()
         self.romid_table = romid_table

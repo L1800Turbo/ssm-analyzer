@@ -76,23 +76,9 @@ class RomService:
         # Emulate functions to extract information
         ssm_fn_emu = SsmFunctionEmulator(self.rom_image, self.rom_cfg)
 
-        # TODO Das wieder aktivieren, wenn die GUI läuft
         ssm_fn_emu.run_ssm_functions()
 
-        
 
-
-        # TODO: für die Pipeline einbauen, vorher wohl einzeln
-        # - Pattern-Detector, mit Ref auf self.config und rom und alles?
-        # - Emulator
-
-
-    # def get_catalog(self, root_folder: Path) -> RomCatalog:
-    #     """Discover and return ROM catalog (lazy discovery)."""
-    #     discovery = RomDiscoveryService()
-    #     roms = discovery.find_roms(root_folder)
-    #     catalog = RomCatalog(roms)
-    #     return catalog
 
     @classmethod
     def list_roms(cls, root_folder: Path) -> list[Path]:

@@ -238,7 +238,7 @@ class SsmActionScalingFunction(SsmActionHelper):
                 logger.warning(f"Scaling function at 0x{self.scaling_fn_ptr:04X} has no item label.")
             return
         
-        if self.scaling_fn_ptr == 0x26A9:
+        if self.scaling_fn_ptr == 0x32BA:
             pass
         
         # Also, save it as a global function address
@@ -305,8 +305,15 @@ class SsmActionScalingFunction(SsmActionHelper):
 
             eq_pieces.append((subst_expression, sp.And(*subst_conditions))) # type: ignore
 
+            # If the calculation only ran once and has no dependencies, we manuelly add samples for more reliable emulation comparisons
+            if len(seen_samples) == 1 and ssm_inputs == []: # TODO für switches aktuell sinnbefreit
+                for test_value in [128, 255]:
+                    if test_value not in seen_samples:
+                        ssm_inputs.append(test_value)
+
 
         # TODO Das dauert ewig bei vielen Bedingungen -> Text-Luts AC
+        logger.debug(f"Simplifying scaling function 0x{self.scaling_fn_ptr:04X} expression with {len(eq_pieces)} pieces...")
         final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
 
 
