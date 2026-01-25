@@ -145,6 +145,10 @@ class AsmViewerWidget(QWidget):
             self.btn_goto.setIcon(icon)
         action_bar.addWidget(self.btn_goto)
 
+        self.btn_export = QPushButton("Export disassembly to file…")
+        self.btn_export.clicked.connect(self.action_export_disassembly)
+        action_bar.addWidget(self.btn_export)
+
         action_bar.addSpacing(20)
 
         action_bar.addStretch(1)
@@ -666,6 +670,25 @@ class AsmViewerWidget(QWidget):
             self._select_address(addr, prefer_start=True)
         except ValueError as ex:
             QMessageBox.warning(self, "Invalid address", str(ex))
+
+    def action_export_disassembly(self) -> None:
+        if self.rom_service is None:
+            QMessageBox.warning(self, "Export disassembly", "No ROM service selected.")
+            return
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(self, 
+                                              "Export disassembly to file", 
+                                              directory=f"./output/{self.rom_service.rom_image.image_name}.lst", 
+                                              filter="Text files (*.lst);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                for di in self.display_items:
+                    f.write(di.text + "\n")
+            QMessageBox.information(self, "Export disassembly", f"Disassembly exported to '{path}'.")
+        except Exception as ex:
+            QMessageBox.critical(self, "Export disassembly", f"Failed to export disassembly: {ex}")
 
     @staticmethod
     def _parse_address(s: str) -> int:

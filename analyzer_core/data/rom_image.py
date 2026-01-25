@@ -12,6 +12,7 @@ class RomImage:
     def __init__(self, rom_file: Path):
         self.rom = rom_file.read_bytes()
         self.file_name = rom_file.name
+        self.image_name = rom_file.stem
 
         self.logger = logging.getLogger(f"{__name__}_{self.file_name}")
 
