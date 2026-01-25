@@ -51,6 +51,9 @@ class PatternDetector:
                 #    continue
 
                 if name in self.found_signatures:
+                    # Workaround when a second pattern with this name was already found
+                    if name in missing:
+                        missing.remove(name)
                     continue
 
                 # If it's not missing any more
@@ -105,6 +108,13 @@ class PatternDetector:
 
                 if pattern_match:
                     self.logger.debug(f"Found {name} function at 0x{pattern_match['funcs'][name]:02X}")
+
+                    # If we got mutual patterns, we remove the other ones, they don't need to be detected anymore
+                    if "replaces" in sig:
+                        for repl in sig["replaces"]: 
+                            if repl in missing:
+                                missing.remove(repl)
+
                     this_found_signatures[name] = pattern_match['funcs'][name]
 
                     for varname, addr in pattern_match.get("vars", {}).items():
@@ -128,13 +138,10 @@ class PatternDetector:
                     if additional_vars_list:
                         self._parse_additional_vars(additional_vars_list)
 
-                    # If we got mutual patterns, we remove the other ones, they don't need to be detected anymor
-                    if "replaces" in sig:
-                        for repl in sig["replaces"]: 
-                            missing.remove(repl)
 
                     self.found_signatures.add(name)
-                    missing.remove(name)
+                    if name in  missing:
+                        missing.remove(name)
                     
                 else:
                     # TODO Anpassen: Nciht pauschal abbrechen, sondern den problematischen raus nehmen
@@ -294,7 +301,7 @@ class PatternDetector:
                 ref_name = op_str[4:-1]
                 ref_var = self.rom_cfg.get_by_name(ref_name)
                 if ref_var is None:
-                    raise SignatureError(f"Reference {ref_name} in Config for signature {name} not found")
+                    raise SignatureError(f"Reference {ref_name} in config for signature {name} not found")
                 refs_found[ref_name] = get_target_rom_value(cur_instr)
 
                 if not ref_var or ref_var.rom_address != get_target_rom_value(cur_instr):

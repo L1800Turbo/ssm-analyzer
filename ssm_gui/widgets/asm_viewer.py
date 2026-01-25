@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
 # Externe Abhängigkeiten (beibehalten)
 from analyzer_core.config.rom_config import RomVarType
 from analyzer_core.config.ssm_model import CurrentSelectedDevice
+from analyzer_core.disasm.capstone_wrap import OperandType
 from analyzer_core.service import RomService                      # noqa
 from analyzer_core.data.rom_image import RomImage                 # noqa
 
@@ -388,20 +389,35 @@ class AsmViewerWidget(QWidget):
         
         bytes_str = " ".join(f"{b:02X}" for b in ins.bytes)
         mnem = ins.mnemonic
-        op = getattr(ins, "op_str", "")
+
+        #op = getattr(ins, "op_str", "")
+        op = ""
+        if ins.target_type is not None and ins.target_type is not None:
+            if ins.target_type == OperandType.IMMEDIATE:
+                op = f"#0x{ins.target_value:02X}"
+            elif ins.target_type == OperandType.DIRECT:
+                op = f"0x{ins.target_value:02X}"
+            elif ins.target_type == OperandType.INDIRECT:
+                op = f"[0x{ins.target_value:02X}]"
+
+
         target = ""
         ref_var = None
 
-        if ins.target_value is not None:
+        if ins.target_value is not None and ins.target_type in (
+                OperandType.DIRECT, OperandType.INDIRECT):
             ref_var = self.rom_service.rom_cfg.get_by_address(ins.target_value)
         
+            # For 16-bit operands it's possible that we have a direct mapping of the variable
+            #if ins.is_operand_16bit:
 
-        # For 16-bit operands it's possible that we have a direct mapping of the variable
-        if ins.is_operand_16bit:
             #ref_var = self.rom_service.rom_cfg.get_by_address(ins.target_value)
             if ref_var is not None and ref_var.rom_address is not None:
+                # Show known strings behind instruction
                 if ref_var.type == RomVarType.STRING and ref_var.size is not None:
                     target = f" \"{self.rom_service.rom_image.rom[ref_var.rom_address:ref_var.rom_address + ref_var.size].decode('utf-8', errors='ignore')}\""
+                
+                # Show variable name behind instruction
                 elif ref_var.type == RomVarType.VARIABLE or ref_var.type == RomVarType.PORT:
                     current_var = self.rom_service.rom_cfg.get_by_address(ref_var.rom_address)
                     if current_var is not None:

@@ -54,6 +54,23 @@
       "description": "SELECT SYSTEM Function"
     },
     {
+      "name": "last_pushed_button_to_value",
+      "pattern": [
+        { "mnemonic": "psha" },
+        { "mnemonic": "pshb" },
+        { "mnemonic": "pshx" },
+        { "mnemonic": "ldaa" },
+        { "mnemonic": "bita", "op_str": "#$1F" },
+        { "mnemonic": "bne" },
+        { "mnemonic": "ldab" },
+        { "mnemonic": "psha" },
+        { "mnemonic": "anda", "op_str": "0x60" },
+        { "mnemonic": "andb", "op_str": "0x60" },
+        { "mnemonic": "sba" },
+        { "mnemonic": "bne" }
+      ]
+    },
+    {
       "name": "set_display_only_no_cursor",
       "depends_on": ["select_system"],
       "start_address": "REF{set_display_only_no_cursor}",
@@ -139,6 +156,25 @@
         { "mnemonic": "stab", "op_str": "VAR{current_ssm_cmd}" }
       ],
       "description": "fn_attach_ssm_cmd_commType: setzt anhand des aktuellen Gerätes den SSM-Protokolltyp und initialisiert die Befehls-Tabelle."
+    },
+    {
+      "name": "attach_ssm_comm_type",
+      "depends_on": ["set_upper_screen_buffer"],
+      "replaces": ["attach_ssm_comm_type"],
+      "pattern": [
+        { "mnemonic": "clr",  "op_str": "VAR{no_success_on_first_connection_flag}" },
+        { "mnemonic": "ldx"},
+        { "mnemonic": "ldaa", "op_str": "REF{current_selected_device}"},
+        { "mnemonic": "lsra" },
+        { "mnemonic": "bcs"},
+        { "mnemonic": "inx" },
+        { "mnemonic": "inx" },
+        { "mnemonic": "bra"},
+        { "mnemonic": "ldd", "op_str": 0 },
+        { "mnemonic": "staa", "op_str": "VAR{current_ssm_cmd}" },
+        { "mnemonic": "stab", "op_str": "VAR{current_ssm_protocol_version}" }
+      ],
+      "description": "2nd version as SVX97 differs a lot"
     },
     {
       "name": "set_communication_protocol",
@@ -229,7 +265,6 @@
     {
       "name": "search_matching_romid_96",
       "depends_on": ["request_romid_save_romid"],
-      "replaces": ["search_matching_romid_97"],
       "pattern": [
         { "mnemonic": "ldx", "op_str": "REF{romid_table_ptr}" },
         { "mnemonic": "clr" },
@@ -239,9 +274,8 @@
       "description": ""
     },
     {
-      "name": "search_matching_romid_97",
+      "name": "search_matching_romid_96",
       "depends_on": ["request_romid_save_romid"],
-      "replaces": ["search_matching_romid_96"],
       "pattern": [
         { "mnemonic": "ldx", "op_str": "REF{romid_table_ptr}" },
         { "mnemonic": "clr" },
@@ -253,7 +287,7 @@
     },
     {
       "name": "search_matching_romid_part",
-      "depends_on": ["search_matching_romid_96", "search_matching_romid_97"],
+      "depends_on": ["search_matching_romid_96"],
       "pattern": [
         { "mnemonic": "pulx" },
         { "mnemonic": "stx",  "op_str": "VAR{current_romid_line_pointer}" },
@@ -424,14 +458,27 @@
       "pattern": [
         { "mnemonic": "staa", "op_str": "VAR{current_scaling_index}" },
         { "mnemonic": "stab", "op_str": "VAR{current_ecu_address_index}" },
-        { "max_skip": 5},
-        { "mnemonic": "ldd",	 "op_str": "0x012C" },
+        { "max_skip": 6},
+        { "mnemonic": "ldd", "op_str": "0x012C" },
         { "mnemonic": "jsr",  "op_str": "REF{wait_ms}" },
         { "mnemonic": "tst",  "op_str": "REF{romid_EGi_Axxx_scheme}" }, 
         { "mnemonic": "beq" },
         { "mnemonic": "ldx" }
       ],
       "description": "IMPREZA96 @0x95E9: Action for YEAR function, print model year and ECU version to screen, skip 4 for SVX96"
+    },
+    {
+      "name": "action_year",
+      "pattern": [
+        { "mnemonic": "staa", "op_str": "VAR{current_scaling_index}" },
+        { "mnemonic": "stab", "op_str": "VAR{current_ecu_address_index}" },
+        { "max_skip": 6},
+        { "mnemonic": "ldd" },
+        { "mnemonic": "jsr",  "op_str": "REF{wait_ms}" },
+        { "mnemonic": "ldaa", "op_str": "REF{current_selected_device}" },
+        { "mnemonic": "bita" }
+      ],
+      "description": "SVX97 @0x94EE: Different approach"
     },
     {
       "name": "action_read_ecu",
@@ -444,7 +491,7 @@
         { "mnemonic": "jsr",  "op_str": "FN{read_from_ecu}" },
         { "mnemonic": "bcs"}
       ],
-      "description": "IMPREZA96 @0x96A9: Action for READ CU function"
+      "description": "IMPREZA96 @0x96A9, SVX97 @0x95A3: Action for READ CU function"
     }
   ],
   "scaling_function_pattern":

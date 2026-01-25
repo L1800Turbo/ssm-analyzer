@@ -7,13 +7,14 @@ from analyzer_core.data.rom_image import RomImage
 from analyzer_core.emu.asm_html_logger import AsmHtmlLogger
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.emu.memory_manager import MemoryManager
+from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
 from analyzer_core.ssm.master_table_analyzer import MasterTableAnalyzer
 from analyzer_core.ssm.romid_table_analyzer import RomIdTableAnalyzer
 
 
 # TODO: Diese ganze Klasse evtl weg und in Service integrieren?
 
-
+logger = logging.getLogger(__name__)
 
 class SsmFunctionEmulator:
     '''
@@ -28,6 +29,7 @@ class SsmFunctionEmulator:
     def run_ssm_functions(self):
         self.__execute_offset_function()
         self.__execute_attach_romid_table_ptr()
+        self.__execute_select_system_confirm_ecus()
         self.__collect_romid_tables()
 
     def set_attached_rom_area(self, mem:MemoryManager, dev: CurrentSelectedDevice):
@@ -104,6 +106,8 @@ class SsmFunctionEmulator:
 
             # If there was never the RomID table value written, this selected device doesn't exist on the cassette
             # Otherwise add it to the possible ones
+
+            # TODO Das reicht so nicht, in SELECT_SYSTEM wird bei svx97 ein AND 0x0F gemacht und ABS fliegt raus, heir wird er aber gesetzt
             if romid_table_pointer in emulator.mem.get_written_memory_addresses():
                 self.rom_cfg.selectable_devices.append(current_device)
             else:
@@ -116,6 +120,49 @@ class SsmFunctionEmulator:
                 length = emulator.read8(romid_table_max_index) + 1,
                 entries=[]
             )
+
+    def __execute_select_system_confirm_ecus(self):
+        '''
+        Attaching the offsets for ROM areas isn't enough to confirm if an ECU really exists.
+        On SVX97, there will be a RomID table pointer created for ABS and TCS, but it is not present on the cassette.
+        The SELECT SYSTEM function filters out non-existing ECUs
+        '''
+        def mock_default_action(em: Emulator6303):
+            # Just return from the function
+            em.mock_return()
+        
+        def mock_last_pushed_button_to_value(em: Emulator6303):
+            em.flags.C = 0  # Clear carry to simulate a pressed button
+            em.mock_return()
+
+        current_selected_device_addr = self.rom_cfg.address_by_name('current_selected_device')
+
+        confirmed_selectable_devices: list[CurrentSelectedDevice] = []
+
+        for current_device in self.rom_cfg.selectable_devices:
+            emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg, current_device=current_device)
+            emulator.set_pc(self.rom_cfg.address_by_name('select_system'))
+
+            SsmEmuHelper.execute_default_mocks(self.rom_cfg, emulator)
+
+            emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_default_action)
+            emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_default_action)
+            emulator.hooks.mock_function(self.rom_cfg.address_by_name("attach_ssm_comm_type"), mock_default_action)
+            emulator.hooks.mock_function(self.rom_cfg.address_by_name("last_pushed_button_to_value"), mock_last_pushed_button_to_value)
+
+            # Set the current device in memory before running the function
+            emulator.write8(current_selected_device_addr, current_device.value)
+
+            emulator.run_function_end()
+
+            # If the current device wasn't altered, it was accepted, if it was changed, e.g. to default (EGi),
+            # it doesn't exist on the cassette
+            final_device_value = emulator.read8(current_selected_device_addr)
+            if final_device_value == current_device.value:
+                confirmed_selectable_devices.append(current_device)
+
+        self.rom_cfg.selectable_devices = confirmed_selectable_devices
+
     
     def __collect_romid_tables(self):
         '''
@@ -124,6 +171,7 @@ class SsmFunctionEmulator:
 
         # Use RomIdTableAnalyzer / RomIdEntryAnalyzer for the per-device / per-entry work.
         for current_device in self.rom_cfg.selectable_devices:
+            logger.debug(f"Collecting RomID tables for device {current_device.name}")
             current_table_info = self.rom_cfg.romid_tables[current_device]
 
             # Let separate emulation run for each ECU

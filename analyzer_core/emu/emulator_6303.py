@@ -330,13 +330,13 @@ class Emulator6303:
 
             asm_step: MemAccess = func(instr)
 
-            if instr.address == 0x3728:
+            if instr.address == 0x93AE: # SVX96 YEAR mit 199*
                 pass
 
             if instr.address == 0x2B75: # DIO1 bei 0x2C36 für 4AT könnte auch noch komisch werden -> romid3 abhängig
                 pass
 
-            if instr.address == 0x2CCF: # scaling_AC_MB_BLW
+            if instr.address == 0x9085: # SVX96 VorActionComms
                 pass
 
             if instr.address == 0x29E9: # scaling_AC_MB_MODEP
