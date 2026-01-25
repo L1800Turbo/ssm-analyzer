@@ -633,8 +633,11 @@ class CalcInstructionParser:
             symbolic_value = sum(val * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
 
             # TODO Testen, nur überschreiben, wenn die expr. schon drin ist
-            if save_expr_okay:
-                self.current_expr = symbolic_value # type: ignore
+            #if save_expr_okay:
+            #    self.current_expr = symbolic_value # type: ignore
+
+            # TODO irgendwie nutzen
+            self.output_buffer_values = buffer_values
 
             self.raw_calculations.append(f"Symbolic buffer value: {self.current_expr}")
 
