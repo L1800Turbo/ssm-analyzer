@@ -52,6 +52,7 @@ class ItemType(Enum):
     CODE = auto()
     DATA = auto()
     FUNC_LABEL = auto()
+    JUMP_LABEL = auto()
 
 
 @dataclass
@@ -70,15 +71,7 @@ class DisplayItem:
 # ---------- Haupt-Widget ----------
 
 class AsmViewerWidget(QWidget):
-    """
-    ASM/ROM Viewer Widget with:
-        - Disassembly & ROM via RomService (external)
-        - Hex/ASCII view with highlights (yellow) & focus (orange)
-        - ASM<->ROM synchronization
-        - Function table incl. callers
-        - Search, go to address
-        - Breakpoints, PC control (GoTo-PC/Step/PC=Selection, follow PC)
-    """
+
     roms_updated = pyqtSignal()
 
     def __init__(self) -> None:
@@ -334,6 +327,12 @@ class AsmViewerWidget(QWidget):
             fn_info = self.rom_service.rom_cfg.get_by_address(rom_addr)
             if fn_info is not None and fn_info.type == RomVarType.FUNCTION:
                 display_items.append(DisplayItem(ItemType.FUNC_LABEL, rom_addr, rom_addr, 0, f"{fn_info.name}:", b""))
+            
+            # Jump label
+            label_info = self.rom_service.rom_cfg.get_by_address(rom_addr)
+            if label_info is not None and label_info.type == RomVarType.LABEL:
+                callers_str = ", ".join(f"0x{addr:04X}" for addr in getattr(label_info, "callers", []))
+                display_items.append(DisplayItem(ItemType.JUMP_LABEL, rom_addr, rom_addr, 0, f"     {label_info.name} (by {callers_str}):", b""))
 
             # Does this address have an instruction?
             if rom_addr in instructions:
@@ -426,6 +425,9 @@ class AsmViewerWidget(QWidget):
                     current_var = self.rom_service.rom_cfg.get_by_address(ref_var.rom_address)
                     if current_var is not None:
                         target = f" ({current_var.name})"
+                
+                elif ref_var.type == RomVarType.LABEL:
+                    target = f" → {ref_var.name}"
 
         # Target display for jump/function call
         if (ins.is_function_call or ins.is_jump):
@@ -572,10 +574,20 @@ class AsmViewerWidget(QWidget):
                 act_goto = menu.addAction(f"Go to {name}")
                 if act_goto is not None:
                     act_goto.triggered.connect(lambda: self._select_address(tgt_addr, prefer_start=True))
+            
         else:
             act_goto = menu.addAction(f"Go to address ${di.address:04X}")
             if act_goto is not None:
                 act_goto.triggered.connect(lambda: self._select_address(di.address, prefer_start=False))
+            
+            if di.type is ItemType.JUMP_LABEL and self.rom_service is not None:
+                label_info = self.rom_service.rom_cfg.get_by_address(di.address)
+                if label_info and hasattr(label_info, "callers"):
+                    for addr in getattr(label_info, "callers", []):
+                        act_goto = menu.addAction(f"Go to caller 0x{addr:04X}")
+                        if act_goto is not None:
+                            act_goto.triggered.connect(lambda checked=False, a=addr: self._select_address(a, prefer_start=True))
+        
 
         menu.exec(self.asm_list.mapToGlobal(pos))
 

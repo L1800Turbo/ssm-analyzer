@@ -80,6 +80,7 @@ class HookManager:
         """Run all write hooks for the given address and value."""
         for cb in self._write_hooks.get(addr & 0xFFFF, []):
             try:
+                # NOTE: When we pass value, we only get 8bit, even if it's a 16bit write command
                 cb(addr & 0xFFFF, value, mem_mgr)
             except Exception as e:
                 self.logger.exception("write_hook error")

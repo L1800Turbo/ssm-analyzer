@@ -67,7 +67,16 @@ class RomCatalogWidget(QWidget):
 
         for path, service in self.rom_services.items():
             current_rom = QStandardItem(path.name)
+
+            for current_item in self.rom_info_model.findItems(path.name):
+                if current_item.text() == path.name:
+                    self.rom_info_model.removeRow(current_item.row())
+                    break # Assuming only one, and we shouldn't mess with removing items while iterating
+            
             self.rom_info_model.appendRow([current_rom])
+
+
+            # TODO hier soll er die alte Row entfernen, wenn current_rom schon vorhanden ist
 
             for ecu in service.rom_cfg.selectable_devices:
                 current_ecu = QStandardItem(ecu.name)

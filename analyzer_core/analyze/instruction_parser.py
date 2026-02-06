@@ -57,6 +57,7 @@ class CalcInstructionParser:
             self.rom_cfg.address_by_name("print_hex_buffer_0"),
             self.rom_cfg.address_by_name("print_hex_buffer_1"),
             self.rom_cfg.address_by_name("print_hex_buffer_2"),
+            self.rom_cfg.address_by_name("print_hex_buffer_3"),
         ]
 
         # Relevant addresses for calculation
@@ -103,6 +104,8 @@ class CalcInstructionParser:
         self.current_expr: sp.Expr = sp.Expr()
         self.last_tested_expr: Optional[sp.Expr] = None
         self.last_tested_value: Optional[int] = None
+
+        self.output_buffer_values: list[int] = []
 
         # If it's necessary to lock further calculation (e.g. after print_lower_screen_buffer)
         self._lock_calculation: bool = False
@@ -175,6 +178,7 @@ class CalcInstructionParser:
         
         old_multi_step_calc = self.multi_step_complement
 
+
         try:
             func = getattr(self, instr.mnemonic)
             func(access)
@@ -219,6 +223,21 @@ class CalcInstructionParser:
         if region and (region.kind == RegionKind.ROM or region.kind == RegionKind.MAPPED_ROM):
             return True
         return False
+    
+    def _get_symbolic_buffer_value(self) -> int:
+        return sum(val * (2 ** (8 * i)) for i, val in enumerate(reversed(self.output_buffer_values)))
+    
+    def get_expression_or_buffer_value(self) -> sp.Expr | sp.Integer:
+        '''
+        Return the expression if there is still a variable involved or if it's a static lookup table, otherwise get the whole buffer
+        '''
+        if self.symbol in self.current_expr.free_symbols or isinstance(self.current_expr, LookupTable):
+            return self.current_expr
+        
+        # No variable involved, no static lookup table, return buffer value
+        return sp.Integer(self._get_symbolic_buffer_value())
+        
+        
 
 
     def set_target_from_var_to_register(self, access: MemAccess, register: str):
@@ -334,7 +353,7 @@ class CalcInstructionParser:
             self.rom_cfg.lookup_tables[table_name] = lut
 
             # Also save the value to the known variables
-            self.rom_cfg.add_lut(table_name, self.lut_access.get_lut_address(), factor * max(possible_idx_vals), current_device=self.emulator.current_device)
+            self.rom_cfg.add_lut(table_name, self.lut_access.get_lut_address(), factor * max(possible_idx_vals), current_device=self.emulator._current_device)
             self.found_luts += 1
 
         # TODO lut_expr und index_var: ist das nicht doppelt?
@@ -601,7 +620,7 @@ class CalcInstructionParser:
         # If we write directly to the output buffer
         if access.instr.target_value in self.hex_buffer:
 
-            save_expr_okay = False
+            #save_expr_okay = False
 
             # First, get all buffer values out of memory
             buffer_values = []
@@ -615,8 +634,8 @@ class CalcInstructionParser:
                 buffer_values[buffer_idx] = self.current_expr
 
                 # TODO aktuell nur speichern, wenn die expression ganz hinten ist
-                if buffer_idx == len(self.hex_buffer) -1:
-                    save_expr_okay = True
+                #if buffer_idx == len(self.hex_buffer) -1:
+                #    save_expr_okay = True
 
             # Then, set the value we manipulated here
             # TODO Das funktioniert so nochc nicht. Wir wissen ja gar nicht, ob wir etwas manipulieren wollen oder ob wir die current_expr
@@ -630,7 +649,7 @@ class CalcInstructionParser:
             
             
             #symbolic_value = sum(sp.Mod(val, 256) * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
-            symbolic_value = sum(val * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
+            #symbolic_value = sum(val * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
 
             # TODO Testen, nur überschreiben, wenn die expr. schon drin ist
             #if save_expr_okay:
@@ -639,7 +658,7 @@ class CalcInstructionParser:
             # TODO irgendwie nutzen
             self.output_buffer_values = buffer_values
 
-            self.raw_calculations.append(f"Symbolic buffer value: {self.current_expr}")
+            self.raw_calculations.append(f"Symbolic buffer value: {self._get_symbolic_buffer_value()}")
 
             self.calc_register_involed = True
     

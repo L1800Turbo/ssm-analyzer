@@ -10,7 +10,7 @@ class MastertableIdentifier:
     '''
     romid: int  # Combined romid0, romid1, romid2 as integer
 
-    dependend_values: Optional[dict[ int, int ]] = None  # e.g., SVX96 AC: 2 Mastertables with 1 RomID but dependend on readout values
+    dependend_values: Optional[tuple[ int, int ]] = None  # e.g., SVX96 AC: 2 Mastertables with 1 RomID but dependend on readout values
 
 @dataclass
 class SimpleMasterTableEntry:
@@ -74,7 +74,7 @@ class RomIdTableCollector:
             self.romid_tables[device] = {}
 
         current_romid = (ssm_romid_table.romid0 << 16) + (ssm_romid_table.romid1 << 8) + ssm_romid_table.romid2
-        current_identifier = MastertableIdentifier(romid=current_romid)
+        current_identifier = MastertableIdentifier(romid=current_romid, dependend_values=ssm_romid_table.romid_identifier_value)
 
         if ssm_romid_table.master_table is None:
             logger.warning(f"RomIdTableEntry for device {device} RomID {current_romid:06X} has no MasterTable, skipping!")
@@ -135,6 +135,8 @@ class RomIdTableCollector:
 
                 # Otherwise, compare existing entrys
                 else:
+                    if entry_label not in self.romid_tables[device][current_identifier].measurements:
+                        raise NotImplementedError(f"New entry {entry_label} for device {device.name}, RomID identifier {current_identifier} not found in existing RomID table! Is this a second RomID table with the same RomID?")
                     existing_entry = self.romid_tables[device][current_identifier].measurements[entry_label]
                     
                     if existing_entry != entry:

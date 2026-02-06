@@ -34,7 +34,10 @@
         { "mnemonic": "rol", "op_str": "VAR{print_hex_buffer_2}" },
         { "mnemonic": "rol", "op_str": "VAR{print_hex_buffer_1}" },
         { "mnemonic": "rol", "op_str": "VAR{print_hex_buffer_0}" }
-      ]
+      ],
+      "additional_vars": {
+        "VAR{print_hex_buffer_3}": "REF{print_hex_buffer_2}+1"
+      }
     },
     {
       "name": "select_system",
@@ -312,7 +315,7 @@
         { "mnemonic": "staa", "op_str": "VAR{current_romid_scaling_index}" },
         { "mnemonic": "stab", "op_str": "VAR{current_romid_label_index}" },
         { "mnemonic": "ldaa", "op_str": "0x05" },
-        { "mnemonic": "staa", "op_str": "VAR{current_romid_menuitems_Index}" },
+        { "mnemonic": "staa", "op_str": "VAR{current_romid_menuitems_index}" },
         { "mnemonic": "ldd",  "op_str": "0x08" },
         { "mnemonic": "std",  "op_str": "VAR{current_romid_mastertable_address}" },
         { "mnemonic": "ldd",  "op_str": "0x0A" },

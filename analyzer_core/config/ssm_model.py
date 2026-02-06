@@ -78,6 +78,10 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
 
     entry_ptr_address: Optional[int] = None
 
+    # If there are multiple master tables for one RomID, there usually is a dependency on a read value during set_current_romid_values.
+    # These calues should be collected here to identify the correct master table.
+    romid_identifier_value: Optional[tuple[int, int]] = None
+
     # Values defined in fn_attach_cu_specific_addresses
     # These values depend in most cases only on the ECU type, but rarely also on the RomID
     max_length_menuitems:Optional[int] = None

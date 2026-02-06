@@ -127,14 +127,6 @@ class Disassembler630x:
         Disassemble reachable code starting from start_addr, following function calls and jumps.
         Returns a dictionary of instructions and a call tree.
         """
-        #visited = set()
-        #if instructions is None: instructions = []
-        #addr_to_instr_index = {}
-
-        if mapped_start_addr == 0x2A59:
-            pass
-        
-
 
         if call_tree is None: call_tree = {}
         code_bytes = set()
@@ -149,9 +141,6 @@ class Disassembler630x:
             start, func_entry, tree = worklist.pop()
             start &= 0xFFFF
             func_entry &= 0xFFFF
-
-            if start == 0x2a7b:
-                pass
 
             cur = start
             cur_rom = self.rom_config.get_mapped_address(cur, self.current_device)
@@ -205,23 +194,36 @@ class Disassembler630x:
                     break
 
                 # Relativ-Branches: Ziel + Fallthrough
-                if instr.is_branch_rel8:
+                if instr.is_branch:
                     if instr.target_value is not None:
                         worklist.append((instr.target_value, func_entry, tree))
+
+                        mapped_address = self.rom_config.get_mapped_address(instr.target_value, self.current_device)
+
+                        # Add label if not present
+                        self.rom_config.add_refresh_label(
+                            name=f"label_{mapped_address}_{instr.target_value:04X}",
+                            rom_address=mapped_address,
+                            current_device=self.current_device,
+                            callers=[cur_rom], #instr.address
+                        )
+
                     if instr.mnemonic == "bra":
                         break
-                    cur = pc_next
-                    cur_rom = self.rom_config.get_mapped_address(cur, self.current_device)
-                    continue
-
-                if instr.is_branch_rel16:
-                    if instr.target_value is not None:
-                        worklist.append((instr.target_value, func_entry, tree))
                     if instr.mnemonic == "lbra":
                         break
                     cur = pc_next
                     cur_rom = self.rom_config.get_mapped_address(cur, self.current_device)
                     continue
+
+                # if instr.is_branch_rel16:
+                #     if instr.target_value is not None:
+                #         worklist.append((instr.target_value, func_entry, tree))
+                #     if instr.mnemonic == "lbra":
+                #         break
+                #     cur = pc_next
+                #     cur_rom = self.rom_config.get_mapped_address(cur, self.current_device)
+                #     continue
 
                 if instr.is_return:
                     break

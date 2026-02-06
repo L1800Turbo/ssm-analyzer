@@ -8,6 +8,7 @@ from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.ssm.master_table_analyzer import MasterTableAnalyzer
 from analyzer_core.ssm.romid_table_entry_analyzer import RomIdEntryAnalyzer
 
+logger = logging.getLogger(__name__)
 
 class RomIdNotFoundError(Exception):
     pass
@@ -32,6 +33,10 @@ class RomIdTableAnalyzer:
     #     return cls(emulator, info)
 
     def __create_romid_table(self):
+        '''
+        Create RomID table with all entries in a hard coded way:
+        Take the RomID table pointer and take the whole table from the length.
+        '''
 
         if self.table.length <= 0:
             return
@@ -53,16 +58,11 @@ class RomIdTableAnalyzer:
         # TODO List ist ja eigentlich falsch, das könnte man umsortieren, geht für den Pointer dann nicht
         
     def _parse_entry_bytes(self, table_bytes: bytes, entry_size: int):
-        """
-        Wählt den passenden Entry-Parser basierend auf entry_size.
-        Erweitere hier bei Bedarf um weitere Formate.
-        """
         if entry_size == RomIdTableEntry_512kb.entry_size:
             return RomIdTableEntry_512kb.from_bytes(table_bytes)
         elif entry_size == getattr(RomIdTableEntry_256kb, "entry_size", 0) and RomIdTableEntry_256kb.entry_size > 0:
             return RomIdTableEntry_256kb.from_bytes(table_bytes)
         else:
-            # Fallback: rohdaten in eine einfache Instanz packen oder Fehler werfen
             raise ValueError(f"Unsupported RomIdTableEntry size: {entry_size}")
         
     
@@ -87,7 +87,7 @@ class RomIdTableAnalyzer:
             entry_analyzer = RomIdEntryAnalyzer(self.emulator, rom_cfg, self.table, entry)
 
             if entry.romid0 & 0xF0 == 0xA0:
-                print(f"Skipping Axx RomID {entry.print_romid_str()} for device {current_device.name}")
+                logger.warning(f"Skipping Axx RomID {entry.print_romid_str()} for device {current_device.name}, not implemented yet.")
                 continue
 
             # mark device in RAM so functions behave as on-device
@@ -100,8 +100,8 @@ class RomIdTableAnalyzer:
             entry_analyzer.request_romid_and_capture(current_device)
 
             # TODO egi nehemn
-            if current_device != CurrentSelectedDevice.EGI:
-               continue 
+            #if current_device != CurrentSelectedDevice.EGI:
+            #   continue 
 
 
 

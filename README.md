@@ -21,25 +21,27 @@ The analyzer can be started with the file `./ssm_gui/app.py`. As it's a tool on 
 The ROM cassettes get detected for known functions by patterns. In order to support more patterns for more cassettes, `./ressources/rom_patterns.json` needs to be extended. The decompilation of the tool always runs as far as patterns can be detected, to that it's possible to analyse possible function patterns in the disassembled code.
 
 ## Implementation status
+Functions that currently work or are still on the roadmap:
+- [x] Export current disassembly status with detected variables into listing file
 - [x] RomID collection for `7xx` based RomIDs
 - [x] SSM connection commands
 - [x] SSM read RomID commands
 - [x] Single address measurement scalings
 - [x] Single address switches
 - [ ] Implement pre 96 RomIDs without mapped ROM areas
-- [ ] Implement `Axx`RomIDs
+- [ ] Implement `Axx`RomIDs with flagbyte analysis
 - [ ] Multi address measurements
 - [ ] Multi address switches
-- [ ] DTC detection
-- [ ] Adjustments and programming functions
-- [ ] XML export
+- [ ] DTC analysis
+- [ ] Adjustments, system check and programming functions
+- [ ] XML export to FreeSSM format
 
 
 ## Supported cassettes
 
 
 |Cassette | part number | status|
-|-|-|-|
+|--|--|--|
 IMPREZA '96 | 498345800 | supported as above
 SVX '96 | |
 SVX '97 | |

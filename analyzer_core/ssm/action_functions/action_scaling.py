@@ -284,7 +284,8 @@ class SsmActionScalingFunction(SsmActionHelper):
                 logger.warning(f"Different decimal places detected during scaling function emulation: previous {decimal_places}, current {current_decimal_places}. Using maximum.")
                 decimal_places = max(decimal_places, current_decimal_places)
 
-            self.instr_parser.negate_current_expression_if_negative()
+            
+            #self.instr_parser.negate_current_expression_if_negative()
 
             #if self.emulator.mem.read(self.rom_cfg.address_by_name('print_-_sign')) == 1:
             #    self.instr_parser.negate_current_expression_if_negative()
@@ -299,8 +300,12 @@ class SsmActionScalingFunction(SsmActionHelper):
                 if value not in seen_samples and value not in ssm_inputs:
                     ssm_inputs.append(value)
 
+            # TODO Hier prüfen, ob noch ein x1 in der Expression ist, wenn nicht, den kompletten Buffer eingeben
+
+            current_expression = self.instr_parser.get_expression_or_buffer_value()
+
             # Get current expression and conditions from the instruction parser and substitude to make simplification by sympy easier
-            subst_expression = LutHelper.substitute_lookup_tables(self.instr_parser.current_expr)
+            subst_expression = LutHelper.substitute_lookup_tables(current_expression)
             subst_conditions = [LutHelper.substitute_lookup_tables(cond) for cond in self.instr_parser.conditions]
 
             eq_pieces.append((subst_expression, sp.And(*subst_conditions))) # type: ignore

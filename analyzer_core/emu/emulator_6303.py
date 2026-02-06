@@ -48,7 +48,7 @@ class Emulator6303:
     def __init__(
         self,
         rom_image: RomImage,
-        current_device: CurrentSelectedDevice,
+        current_device = CurrentSelectedDevice.UNDEFINED,
         #dasm: Optional[Disassembler630x] = None,
         rom_config: Optional[RomConfig] = None,
         hooks: Optional[HookManager] = None,
@@ -59,7 +59,7 @@ class Emulator6303:
     ) -> None:
         
         #self.dasm = dasm if dasm else Disassembler630x(rom=rom_image.rom) # TODO Das noch raus, wird aber aus den Mocks genommen, mit debugger ugcken, wie man das weg bekommt
-        self.current_device = current_device
+        self._current_device = current_device
 
         self.memory_map = memory_map if memory_map else MemoryMap()
         self.hooks = hooks or HookManager()
@@ -85,6 +85,9 @@ class Emulator6303:
         #     self.asm_html_logger = AsmHtmlLogger(log_path, append=True)
         # except Exception:
         #     self.asm_html_logger = None
+
+    def set_current_device(self, device: CurrentSelectedDevice):
+        self._current_device = device
 
 
     # --- Helpers for tracing / logging ---
@@ -273,7 +276,7 @@ class Emulator6303:
 
     # --- Step/Execute ---
     def get_current_instruction(self) -> Optional[Instruction]:
-        mapped_pc = self.rom_config.get_mapped_address(self.PC, self.current_device)
+        mapped_pc = self.rom_config.get_mapped_address(self.PC, self._current_device)
         return self.rom_config.instructions.get(mapped_pc)
         #for instr in self.rom_config.instructions:
         #    if instr.address == self.PC:
@@ -339,7 +342,10 @@ class Emulator6303:
             if instr.address == 0x9085: # SVX96 VorActionComms
                 pass
 
-            if instr.address == 0x29E9: # scaling_AC_MB_MODEP
+            if instr.address == 0x87BC:
+                pass
+
+            if instr.address == 0xAA8F:
                 pass
 
             # TODO hier die steps auswerten?
@@ -1096,6 +1102,25 @@ class Emulator6303:
         self.PC += instr.size
         ma.next_instr_addr=self.PC
         return ma
+    
+    def aba(self, instr: Instruction) -> MemAccess:
+        result = (self.A + self.B) & 0xFF
+        self._set_ZN_8(result)
+        self.flags.C = 1 if self.A + self.B > 0xFF else 0
+        self.flags.V = 1 if ((self.A ^ result) & (self.B ^ result) & 0x80) != 0 else 0
+        self.A = result
+
+        old_PC = self.PC
+        self.PC += instr.size
+        return MemAccess(
+            instr=instr,
+            target_addr=None,
+            var=self.rom_config.get_by_address(self.A),
+            value=self.A,
+            rw='W',
+            by=self.PC,
+            next_instr_addr=self.PC
+        )
     
     def sba(self, instr: Instruction) -> MemAccess:
         """Subtract B from A."""

@@ -89,8 +89,8 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(QLabel("Select ROM image:"))
         top_bar.addWidget(self.rom_select)
 
-        self.load_button = QPushButton("Load current ROM file") # Todo später analyze oder load nennen, je nachdem ob schon analysiert
-        self.load_button.clicked.connect(self.__on_load_rom_file)
+        self.load_button = QPushButton("Analyze current ROM file") # Todo später analyze oder load nennen, je nachdem ob schon analysiert
+        self.load_button.clicked.connect(self.__on_analyze_rom_file)
         top_bar.addWidget(self.load_button)
         top_bar.addStretch(1)
         self.main_vertical_layout.addLayout(top_bar)
@@ -123,6 +123,8 @@ class MainWindow(QMainWindow):
 
         # On start: select the default ROM folder
         self.set_rom_folder(DEFAULT_ROM_FOLDER)
+        self.rom_select.currentIndexChanged.connect(self.__on_load_rom_file)
+
 
         self.__init_logging()
 
@@ -160,18 +162,7 @@ class MainWindow(QMainWindow):
 
             self.rom_services[rom_path] = service
     
-    def __on_load_rom_file(self) -> None:
-        """Handles loading and analyzing the currently selected ROM file."""
-
-
-        # TODO: Abfrage einbauen if not analyzed yet, analyze
-        current_service: RomService = self.rom_services[self.rom_select.currentData()]
-
-        try:
-            current_service.analyze()
-        except Exception as e:
-            logger.error(f"Exception in analyzer: {str(e)}")
-
+    def __refresh_views(self, current_service: RomService) -> None:
         self.asm_viewer.set_rom_service(current_service)
         self.asm_viewer.build_current_rom_ui()
 
@@ -184,4 +175,29 @@ class MainWindow(QMainWindow):
 
         # Refresh SSM tables
         self.ssm_tables.refresh_romid_table()
+    
+    def __on_load_rom_file(self) -> None:
+        """Handles loading and analyzing the currently selected ROM file."""
+
+
+        # TODO: Abfrage einbauen if not analyzed yet, analyze
+        current_service: RomService = self.rom_services[self.rom_select.currentData()]
+
+        # try:
+        #     current_service.analyze()
+        # except Exception as e:
+        #     logger.error(f"Exception in analyzer: {str(e)}")
+
+        self.__refresh_views(current_service)
+    
+    def __on_analyze_rom_file(self) -> None:
+        """Handles analyzing the currently selected ROM file."""
+        current_service: RomService = self.rom_services[self.rom_select.currentData()]
+
+        try:
+            current_service.analyze()
+        except Exception as e:
+            logger.error(f"Exception in analyzer: {str(e)}")
+
+        self.__refresh_views(current_service)
 

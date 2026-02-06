@@ -26,11 +26,13 @@ class SsmFunctionEmulator:
         self.rom_image = rom_image
         self.rom_cfg = rom_cfg
 
+        #self.emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
+
     def run_ssm_functions(self):
         self.__execute_offset_function()
-        self.__execute_attach_romid_table_ptr()
         self.__execute_select_system_confirm_ecus()
-        self.__collect_romid_tables()
+        self.__execute_attach_romid_table_ptr()
+        #self.__collect_romid_tables()
 
     def set_attached_rom_area(self, mem:MemoryManager, dev: CurrentSelectedDevice):
         mem.set_mapped_region(self.rom_cfg.get_offset(dev))
@@ -57,6 +59,8 @@ class SsmFunctionEmulator:
 
         # Loop over all thinkable (not yet known if possible) ECU types 
         for current_device in CurrentSelectedDevice:
+
+            #self.emulator.set_current_device(current_device)
 
             # Initialize an emulator seperately for each run
             emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg, current_device=current_device)
@@ -91,13 +95,14 @@ class SsmFunctionEmulator:
         current_selected_device_addr = self.rom_cfg.address_by_name('current_selected_device')
 
         # Take every device posibility, find out if they actually exist
-        for current_device in CurrentSelectedDevice:
+        for current_device in self.rom_cfg.selectable_devices: #CurrentSelectedDevice:
             emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg, current_device=current_device)
+            #self.emulator.set_current_device(current_device)
             #self.add_default_hooks(emulator)
             emulator.set_pc(start_address)
 
             # Adjust offset for the current device
-            #self.set_attached_rom_area(emulator.mem, current_device) TODO Warum noch kein error?
+            #self.set_attached_rom_area(self.emulator.mem, current_device) TODO Warum noch kein error?
 
             # Set the current device in memory before running the function
             emulator.write8(current_selected_device_addr, current_device.value)
@@ -108,10 +113,10 @@ class SsmFunctionEmulator:
             # Otherwise add it to the possible ones
 
             # TODO Das reicht so nicht, in SELECT_SYSTEM wird bei svx97 ein AND 0x0F gemacht und ABS fliegt raus, heir wird er aber gesetzt
-            if romid_table_pointer in emulator.mem.get_written_memory_addresses():
-                self.rom_cfg.selectable_devices.append(current_device)
-            else:
-                continue
+            #if romid_table_pointer in self.emulator.mem.get_written_memory_addresses():
+            #    self.rom_cfg.selectable_devices.append(current_device)
+            #else:
+            #    continue
 
             # Take the offset for the current device
             self.rom_cfg.romid_tables[current_device] = RomIdTableInfo(
@@ -120,6 +125,8 @@ class SsmFunctionEmulator:
                 length = emulator.read8(romid_table_max_index) + 1,
                 entries=[]
             )
+
+            self.__collect_romid_tables(emulator, current_device)
 
     def __execute_select_system_confirm_ecus(self):
         '''
@@ -139,7 +146,7 @@ class SsmFunctionEmulator:
 
         confirmed_selectable_devices: list[CurrentSelectedDevice] = []
 
-        for current_device in self.rom_cfg.selectable_devices:
+        for current_device in CurrentSelectedDevice: #self.rom_cfg.selectable_devices:
             emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg, current_device=current_device)
             emulator.set_pc(self.rom_cfg.address_by_name('select_system'))
 
@@ -164,31 +171,36 @@ class SsmFunctionEmulator:
         self.rom_cfg.selectable_devices = confirmed_selectable_devices
 
     
-    def __collect_romid_tables(self):
+    def __collect_romid_tables(self, emulator: Emulator6303, current_device: CurrentSelectedDevice):
         '''
         Collects all RomID table information based on the RomIDs that were directly taken out of the ROM
         '''
 
         # Use RomIdTableAnalyzer / RomIdEntryAnalyzer for the per-device / per-entry work.
-        for current_device in self.rom_cfg.selectable_devices:
-            logger.debug(f"Collecting RomID tables for device {current_device.name}")
-            current_table_info = self.rom_cfg.romid_tables[current_device]
+        #for current_device in self.rom_cfg.selectable_devices:
 
-            # Let separate emulation run for each ECU
-            emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg, current_device=current_device)
-            #self.add_default_hooks(emulator)
-            emulator.set_pc(self.rom_image.reset_vector())
 
-            # Initialize a logger for asm instructions
-            
-            log_path = Path(f"logs/{self.rom_image.file_name}_{current_device.name}_asm_trace.html")
-            asm_html_logger = AsmHtmlLogger(log_path, append=False)
-            emulator.add_logger("html_logger", asm_html_logger.log)
+        logger.debug(f"Collecting RomID tables for device {current_device.name}")
+        current_table_info = self.rom_cfg.romid_tables[current_device]
 
-            # Adjust offset for the current device (mapped ROM area)
-            self.set_attached_rom_area(emulator.mem, current_device)
+        # Let separate emulation run for each ECU
+        #emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg, current_device=current_device)
+        emulator.set_current_device(current_device)
+        #self.add_default_hooks(emulator)
+        emulator.set_pc(self.rom_image.reset_vector())
 
-            # Create entries for current ECU and enrich them
-            romid_tbl = RomIdTableAnalyzer(emulator, current_table_info, self.rom_cfg)
-            romid_tbl.enrich_entries(self.rom_cfg, current_device)
-            # master_table was created inside enrich_entries for each entry
+        # Initialize a logger for asm instructions
+        
+        log_path = Path(f"logs/{self.rom_image.file_name}_{current_device.name}_asm_trace.html")
+        asm_html_logger = AsmHtmlLogger(log_path, append=False)
+        emulator.add_logger("html_logger", asm_html_logger.log)
+
+        # Adjust offset for the current device (mapped ROM area)
+        self.set_attached_rom_area(emulator.mem, current_device)
+
+        # Create entries for current ECU and enrich them
+        romid_tbl = RomIdTableAnalyzer(emulator, current_table_info, self.rom_cfg)
+        romid_tbl.enrich_entries(self.rom_cfg, current_device)
+        # master_table was created inside enrich_entries for each entry
+
+        emulator.remove_logger("html_logger")

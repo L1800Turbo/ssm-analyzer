@@ -18,6 +18,7 @@ class RomVarType(Enum):
     PORT = auto()
     STRING = auto()
     LOOKUP_TABLE = auto()
+    LABEL = auto()
 
 @dataclass
 class RomVarDefinition:
@@ -27,7 +28,7 @@ class RomVarDefinition:
     type: RomVarType
     size: Optional[int] = None
 
-    callers: Optional[list[int]] = None  # For functions: list of addresses that call this function
+    callers: Optional[list[int]] = None  # For functions and labels: list of addresses that call this function
 
 # TODO Noch sinnvoll hier:
 # RomVarType enthalt jetzt STIRNGS, aber was ist mit Adressen wie z.B. einer Mastertabelle und sowas? Also alles, was irgendwie "fix" im ROM klebt
@@ -113,6 +114,13 @@ class RomConfig:
         var = self.get_by_address(rom_address)
         if var is None:
             self._register(RomVarDefinition(name=name, rom_address=rom_address, mapped_address=mapped_address, type=RomVarType.FUNCTION, callers=callers))            
+        else:
+            self._refresh_function(var, name, rom_address, callers, rename)
+    
+    def add_refresh_label(self, name:str, rom_address: int, current_device: CurrentSelectedDevice, callers: Optional[list[int]] = [], rename: bool = False):
+        var = self.get_by_address(rom_address)
+        if var is None:
+            self._register(RomVarDefinition(name=name, rom_address=rom_address, mapped_address=self.get_mapped_address(rom_address, current_device), type=RomVarType.LABEL, callers=callers))            
         else:
             self._refresh_function(var, name, rom_address, callers, rename)
 
@@ -221,6 +229,9 @@ class RomConfig:
 
         # Check if it's in mapped region
         if MemoryMap().in_mapped_rom(original_address):
+            #if current_device == CurrentSelectedDevice.UNDEFINED:
+            #    raise RomConfigError("Current device is UNDEFINED, cannot get mapped address.")
+        
             offset = self.get_offset(current_device)
             return original_address + offset
         return original_address
