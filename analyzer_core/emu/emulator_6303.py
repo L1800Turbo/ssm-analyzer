@@ -345,7 +345,7 @@ class Emulator6303:
             if instr.address == 0x87BC:
                 pass
 
-            if instr.address == 0xAA8F:
+            if instr.address == 0x25A0:
                 pass
 
             # TODO hier die steps auswerten?

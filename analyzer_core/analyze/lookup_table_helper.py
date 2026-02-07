@@ -62,6 +62,7 @@ class LookupTable(sp.Function):
     # For LUTs with Text (e.g. 4EAT: 1st, 2nd, 3rd, 4th)
     is_String = False
 
+    # TODO wird die benutzt?
     @classmethod
     def eval(cls, *args): # type: ignore
         # Only evaluate as sympy expression if the argument is an integer, others throw errors
@@ -73,7 +74,7 @@ class LookupTable(sp.Function):
             if 0 <= idx < len(cls.table_data):
                 table_value = cls.table_data[idx]
                 if isinstance(table_value, int):
-                    return sp.Integer(cls._interpret_value(table_value))
+                    return sp.Integer(cls.interpret_16bit_signed_value(table_value))
 
                 raise NotImplementedError("Unknown table_data value")
             else:
@@ -81,7 +82,7 @@ class LookupTable(sp.Function):
         return None  # otherwise keep as is for symbolic evaluation
     
     @staticmethod
-    def _interpret_value(v):
+    def interpret_16bit_signed_value(v):
         """Interpret LUT values (16-bit) as signed."""
         v = int(v) & 0xFFFF
         if v & 0x8000:
@@ -156,7 +157,7 @@ class LookupTableHelper:
                 if lut_class.item_size == 1:
                     lut_class.table_data[i] = emu.read8(lut_class.table_ptr + i)
                 elif lut_class.item_size == 2:
-                    lut_class.table_data[i] = emu.read16(lut_class.table_ptr + i * 2)
+                    lut_class.table_data[i] = LookupTable.interpret_16bit_signed_value(emu.read16(lut_class.table_ptr + i * 2))
                 elif lut_class.item_size == 16:
                     item_bytes = emu.mem.read_bytes(lut_class.table_ptr + i * 0x10, 0x10)
                     lut_class.table_data[i] = byte_interpreter.render(item_bytes).strip()
@@ -306,16 +307,30 @@ class LookupTableHelper:
                         raise NotImplementedError("Non-integer solutions for LUT index not implemented.")
             elif cond == sp.Basic(True) or cond == sp.S.true:
                 # does this expression still contain the symbol?
-                if len(curr_expr.free_symbols) > 0 and LookupTableHelper.is_lut(curr_expr): # curr_expr.has(symbol):
-                    #for idx in range(0, 256):
-                    for idx in curr_expr.func.table_data.keys():
-                        expr_eval: sp.Expr = curr_expr.subs({symbol: idx}) # tkype: ignore
-                        lut_values[idx] = eval_expression(expr_eval)
-                        #possible_index_values.append(idx)
+
+                # TODO: Dieser Teil müsste eigentlich komplett überabrietet werden, eval_expression geht nur,
+                # wenn ausschließelich eine LUT alleine in der gleichung ist. Geht für Text-LUTS idr. auf
+                # bei Gt, LT, usw. kommt das Ganze nochmal, dort wird allerdings nicht evaluiert, wenn die LUT
+                # nur ein Teil der Gleichung ist.
+                luts: set[LookupTable] = curr_expr.atoms(LookupTable)
+                if len(curr_expr.free_symbols) > 0 and luts: #LookupTableHelper.is_lut(curr_expr): # curr_expr.has(symbol):
+                    for lut in luts:
+                        for idx in lut.func.table_data.keys():
+
+                            expr_eval = curr_expr.subs({symbol: idx}) 
+
+
+                            #expr_eval: sp.Expr = curr_expr.subs(lut, 23) # tkype: ignore lut.func.table_data[idx]
+                            lut_values[idx] = eval_expression(expr_eval)
+                            #possible_index_values.append(idx)
+
+                            # TODO wenn ein weiteres x1 drin ist, würde das nicht evaluiert..
                 else:
                     lut_values['default'] = eval_expression(curr_expr)
             elif isinstance(cond, (sp.Gt, sp.Lt, sp.Ge, sp.Le)):
+                
                 if len(curr_expr.free_symbols) > 0 and LookupTableHelper.is_lut(curr_expr):
+                #if len(curr_expr.free_symbols) > 0 and curr_expr.atoms(LookupTable):
                     for idx in curr_expr.func.table_data.keys():
                         # Check if idx satisfies the condition
                         if cond.subs({symbol: idx}): # type: ignore

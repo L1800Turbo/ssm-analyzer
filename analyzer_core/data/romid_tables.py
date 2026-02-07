@@ -48,6 +48,9 @@ class SimpleMasterTable:
     measurements: dict[str, SimpleMeasurement] = field(default_factory=dict)
     switches: dict[str, SimpleSwitchDefinition] = field(default_factory=dict)
 
+    romid_identifier_value: Optional[tuple[int, int]] = None # Additional values like SVX96 AC
+
+
     # diags
     # ajustments
     # ...
@@ -86,7 +89,8 @@ class RomIdTableCollector:
             self.romid_tables[device][current_identifier] = SimpleMasterTable(
                 romid_str=ssm_romid_table.print_romid_str(),
                 model=ssm_romid_table.ssm_model if ssm_romid_table.ssm_model else "",
-                year=str(ssm_romid_table.ssm_year) if ssm_romid_table.ssm_year else ""
+                year=str(ssm_romid_table.ssm_year) if ssm_romid_table.ssm_year else "",
+                romid_identifier_value=ssm_romid_table.romid_identifier_value
             )
             create_new_entry = True
         

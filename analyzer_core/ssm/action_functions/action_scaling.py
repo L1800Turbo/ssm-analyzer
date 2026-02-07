@@ -308,7 +308,11 @@ class SsmActionScalingFunction(SsmActionHelper):
             subst_expression = LutHelper.substitute_lookup_tables(current_expression)
             subst_conditions = [LutHelper.substitute_lookup_tables(cond) for cond in self.instr_parser.conditions]
 
-            eq_pieces.append((subst_expression, sp.And(*subst_conditions))) # type: ignore
+            # Remove conditions that can't be solved, e.g. non-integer Ne
+            cleaned_subst_conditions = self.instr_parser.remove_unreachable_conditions(subst_conditions)
+            
+                    
+            eq_pieces.append((subst_expression, sp.And(*cleaned_subst_conditions))) # type: ignore
 
             # If the calculation only ran once and has no dependencies, we manuelly add samples for more reliable emulation comparisons
             if len(seen_samples) == 1 and ssm_inputs == []: # TODO für switches aktuell sinnbefreit

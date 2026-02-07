@@ -34,7 +34,7 @@ class RomIdTableModel(QAbstractTableModel):
         col = index.column()
 
         mapping = {
-                0: f"{entry.romid_str}",
+                0: f"{entry.romid_str}{f' / {entry.romid_identifier_value[0]:04X} -> {entry.romid_identifier_value[1]}' if entry.romid_identifier_value else ''}",
                 1: entry.model if entry.model else "",
                 2: entry.year if entry.year else "",
             }

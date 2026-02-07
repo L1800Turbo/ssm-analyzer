@@ -202,7 +202,7 @@ class Disassembler630x:
 
                         # Add label if not present
                         self.rom_config.add_refresh_label(
-                            name=f"label_{mapped_address}_{instr.target_value:04X}",
+                            name=f"label_0x{mapped_address:04X}_0x{instr.target_value:04X}",
                             rom_address=mapped_address,
                             current_device=self.current_device,
                             callers=[cur_rom], #instr.address

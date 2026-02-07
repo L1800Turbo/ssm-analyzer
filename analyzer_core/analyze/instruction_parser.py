@@ -354,7 +354,8 @@ class CalcInstructionParser:
 
             # Also save the value to the known variables
             self.rom_cfg.add_lut(table_name, self.lut_access.get_lut_address(), factor * max(possible_idx_vals), current_device=self.emulator._current_device)
-            self.found_luts += 1
+            
+        self.found_luts += 1
 
         # TODO lut_expr und index_var: ist das nicht doppelt?
         self.raw_calculations.append(f"[{self.lut_access.lut_expr}] -> LUT(addr=0x{self.lut_access.get_lut_address():04X})")
@@ -407,6 +408,7 @@ class CalcInstructionParser:
                 for s in sols:
                     if s.is_real and 0 <= s <= 255:
                         solved_values.add(int(s))
+
             # Add neighboring values to account for rounding issues
             for s in list(solved_values):
                 for off in (-1, +1):
@@ -414,6 +416,22 @@ class CalcInstructionParser:
                     solved_values.add(val)
      
         return solved_values
+    
+    def remove_unreachable_conditions(self, conditions: list) -> list:
+        cleaned_conditions = conditions.copy()
+        for cond in conditions:
+            if isinstance(cond, sp.Ne):
+                symbols = cond.free_symbols
+                if len(symbols) == 1:
+                    eq = sp.Eq(cond.lhs, cond.rhs)
+                    sols = sp.solve(eq, symbols.pop())
+                    for sol in sols:
+                        if not sol.is_integer:
+                            cleaned_conditions.remove(cond)
+                            #logger.debug(f"Removed non-integer condition {cond} from scaling function analysis. As it's a non integer value that never can be solved.")
+                else:
+                    raise NotImplementedError(f"Condition with multiple free symbols not supported: {cond}")
+        return cleaned_conditions
 
     def _get_possible_index_values(self, index_var: sp.Basic) -> list[int]:
         # Modulo (fully bit masked values): Mod(x1, N)
