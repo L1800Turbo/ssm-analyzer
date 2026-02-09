@@ -78,6 +78,7 @@ class RomIdTableAnalyzer:
         TODO warum rom_cfg übergeben, ist doch self.rom_cfg?
         """
 
+
         for entry in self.table.entries:
             # skip unsupported formats
             if isinstance(entry, RomIdTableEntry_256kb):
@@ -114,8 +115,7 @@ class RomIdTableAnalyzer:
             # TODO Für Debuggen und schneller suchen
             #if entry.print_romid_str() != "74 BD 00" and entry.print_romid_str() != "71 93 00":  # 76 5D B0  71 93 00
             #   return
-            
-
+        
 
             # Create MasterTable analyzer for this entry (done by caller or here)
             entry.master_table = MasterTableInfo(

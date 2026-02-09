@@ -345,21 +345,15 @@ class Emulator6303:
             if instr.address == 0x87BC:
                 pass
 
-            if instr.address == 0x25A0:
+            if instr.address == 0x3793:
                 pass
 
-            # TODO hier die steps auswerten?
-            # TODO in eigene Log schmeißen direkt
+          
+
 
             for logger in self.asm_logger.values():
                 logger(instr, asm_step)
 
-
-            # TODO Entfallen lassen und dann auch als logger registrieren
-            #if self.asm_html_logger is not None:
-            #    self.asm_html_logger.log(asm_step)
-            #else:
-            #    print(asm_step)
 
             # Take care of post-hooks
             for pc in list(self.hooks.waiting_for_post_hook.keys()):
@@ -388,9 +382,6 @@ class Emulator6303:
         """
         Run from the current PC into functions and back until a RTS/RTI from the current level is reached.
         """
-
-        # Only for debug
-        start_pc = self.PC
 
         # If we want to run until this level's rts/rti or abort at specific PC
         if abort_pc is not None:

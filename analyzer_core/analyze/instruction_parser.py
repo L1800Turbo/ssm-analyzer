@@ -11,6 +11,7 @@ from pyparsing import Callable
 from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableAccess, LookupTableHelper
 from analyzer_core.config.memory_map import MemoryRegion, RegionKind, RegionKind
 from analyzer_core.config.rom_config import RomConfig
+from analyzer_core.config.ssm_model import RomIdTableEntry_512kb
 from analyzer_core.disasm.capstone_wrap import OperandType
 from analyzer_core.disasm.insn_model import Instruction
 from analyzer_core.emu.emulator_6303 import Emulator6303
@@ -60,6 +61,21 @@ class CalcInstructionParser:
             self.rom_cfg.address_by_name("print_hex_buffer_3"),
         ]
 
+        # Addresses that notify the current scale function as dependend from RomID values
+        self.dependend_romid_adresses = [
+            self.rom_cfg.address_by_name("romid_0"),
+            self.rom_cfg.address_by_name("romid_1"),
+            self.rom_cfg.address_by_name("romid_2"),
+            self.rom_cfg.address_by_name("current_romid_scaling_index"),
+            self.rom_cfg.address_by_name("current_romid_label_index"),
+            self.rom_cfg.address_by_name("current_romid_menuitems_index"),
+            self.rom_cfg.address_by_name("current_romid_a"),
+            self.rom_cfg.address_by_name("current_romid_b"),
+            self.rom_cfg.address_by_name("current_romid_model_index"),
+            self.rom_cfg.address_by_name("current_romid_flagcmd"),
+        ]
+
+
         # Relevant addresses for calculation
         mock_function_names: dict[str, Callable[[MemAccess], None]] = {
             "divide": self._divide,
@@ -98,6 +114,8 @@ class CalcInstructionParser:
         self.new_calc_register = None
         self.new_calc_register_pushed = None
         self.old_calc_register = None # TODO zunächst für bita SVX96
+
+        self.romid_dependend_addresses: set[tuple[int,int]] = set()
 
         self.raw_calculations: list[str] = []
 
@@ -255,6 +273,9 @@ class CalcInstructionParser:
             # TODO so noch nicht, der muss ja jetzt die position kennen
             # und: Wenn ein anderes Symbol drin ist, darf er nicht alles überschreiben
             self.current_expr = self.symbol
+        
+        elif access.instr.target_value in self.dependend_romid_adresses:
+            self.romid_dependend_addresses.add((access.instr.target_value, self.emulator.mem.read(access.instr.target_value)))
 
         elif self.__is_register_match(self.new_calc_register, register):
             # On string based LUTs this happens quite often, so don't show a warning each time
@@ -477,7 +498,7 @@ class CalcInstructionParser:
             self.current_expr = self.current_expr / (10 ** decimal_places) 
     
     @staticmethod
-    def _fast_simplify_condition(cond: sp.Expr) -> sp.Expr:
+    def _fast_simplify_condition(cond: sp.Expr | sp.And) -> sp.Expr:
         if not isinstance(cond, sp.And):
             return cond
 
@@ -573,7 +594,7 @@ class CalcInstructionParser:
         if cond is sp.true or cond is True:
             return 4
 
-        # einzelne Relationen
+        # Simgle relational conditions:
         if isinstance(cond, sp.Eq):
             return 0
         if isinstance(cond, (sp.Lt, sp.Le, sp.Gt, sp.Ge)):
@@ -581,8 +602,7 @@ class CalcInstructionParser:
         if isinstance(cond, sp.Ne):
             return 3
 
-        # Falls cond ein zusammengesetzter boolescher Ausdruck ist (Or/And/Not/Xor),
-        # bewerte nach den enthaltenen Relationen:
+        # For compound conditions, try to find the lowest priority among contained relations
         if isinstance(cond, Boolean):
             # Try to get lowest priority among contained relations
             priorities = []
@@ -651,29 +671,6 @@ class CalcInstructionParser:
                 buffer_idx = self.hex_buffer.index(self.new_calc_address)
                 buffer_values[buffer_idx] = self.current_expr
 
-                # TODO aktuell nur speichern, wenn die expression ganz hinten ist
-                #if buffer_idx == len(self.hex_buffer) -1:
-                #    save_expr_okay = True
-
-            # Then, set the value we manipulated here
-            # TODO Das funktioniert so nochc nicht. Wir wissen ja gar nicht, ob wir etwas manipulieren wollen oder ob wir die current_expr
-            # behalten wollen
-            #idx = self.hex_buffer.index(access.instr.target_value)
-            #buffer_values[idx] = getattr(self.saved_registers, register)
-
-
-            # Setze den aktuellen Ausdruck als Zusammensetzung aller Teile
-            #self.raw_calculations.append(f"Overwriting hex_buffer[{idx}] with {self.saved_registers.D}, full buffer: {buffer_values}")
-            
-            
-            #symbolic_value = sum(sp.Mod(val, 256) * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
-            #symbolic_value = sum(val * (2 ** (8 * i)) for i, val in enumerate(reversed(buffer_values)))
-
-            # TODO Testen, nur überschreiben, wenn die expr. schon drin ist
-            #if save_expr_okay:
-            #    self.current_expr = symbolic_value # type: ignore
-
-            # TODO irgendwie nutzen
             self.output_buffer_values = buffer_values
 
             self.raw_calculations.append(f"Symbolic buffer value: {self._get_symbolic_buffer_value()}")
@@ -1236,14 +1233,7 @@ class CalcInstructionParser:
     
     def _compare(self, access: MemAccess, register: str):
         if self.__is_register_match(self.new_calc_register, register):
-            #self.raw_calculations.append(f" ?= {instr.target_value}")
             self.last_tested_expr = self.current_expr
-            # if instr.target_type == OperandType.INDIRECT:
-            #     # If indirect, we need to take the value from memory
-            #     #assert instr.target_value is not None
-            #     mem_value = self.emulator.mem.read_byte(instr.target_value)
-            #     self.last_tested_value = mem_value
-            #self.last_tested_value = instr.target_value
 
             # Take the actual value from memory
             self.last_tested_value = access.value

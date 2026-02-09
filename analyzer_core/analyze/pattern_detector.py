@@ -31,14 +31,9 @@ class PatternDetector:
 
     def detect_patterns(self, instructions: dict[int, Instruction], pattern_group:str, no_warnings = False) -> dict[str, int]:
         signatures = self.repo.get_patterns(pattern_group)
-        #self.fn_patterns
-
-        # Get all patterns as missing to be detected one after another
-        #missing = [step["name"] for step in signatures]
 
         # Get all patterns not existing in rom_cfg as missing to be detected one after another
         missing = [step["name"] for step in signatures if "name" in step and step["name"] not in self.rom_cfg.all_items()]
-
 
         this_found_signatures:dict[str, int] = {}
 
@@ -46,9 +41,6 @@ class PatternDetector:
         while missing:
             for sig in signatures:
                 name = sig["name"]
-
-                #if self.rom_cfg.get_by_name(name) is not None:
-                #    continue
 
                 if name in self.found_signatures:
                     # Workaround when a second pattern with this name was already found
@@ -144,8 +136,6 @@ class PatternDetector:
                         missing.remove(name)
                     
                 else:
-                    # TODO Anpassen: Nciht pauschal abbrechen, sondern den problematischen raus nehmen
-                    #raise SignatureNotFound(f"Pattern {name} not found")
                     missing.remove(name)
                     if not no_warnings:
                         self.logger.error(f"Pattern {name} not found")
@@ -165,12 +155,6 @@ class PatternDetector:
             search_pattern: dict[str,str|int|list[int]] = pattern[pattern_idx]
             cur_instr = instructions[instr_idx]
 
-            # For debugging
-            # if cur_instr.address == 0xC15B:
-            #     pass
-
-            # TODO: Er muss noch die passende Startadresse einlesen können, um nicht bei 0 anzufangen!
-
             # 1. Skip
             if "max_skip" in search_pattern:
                 if type(search_pattern["max_skip"]) is not int: raise SignatureError(f"Invalid skip values in pattern {name}")
@@ -184,9 +168,6 @@ class PatternDetector:
                 found = False
                 # Try all skip variants from min to max
                 for skip in range(0, max_skip + 1):
-
-                    # Erlaubt, wenn skip == min_skip_list[0] oder skip >= min_skip_list[1] usw.
-                    # TODO ungetestet
                     if not any(skip == min_val or skip >= min_val for min_val in min_skip_list):
                         continue
 

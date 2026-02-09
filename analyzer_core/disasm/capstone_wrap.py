@@ -216,15 +216,6 @@ class Disassembler630x:
                     cur_rom = self.rom_config.get_mapped_address(cur, self.current_device)
                     continue
 
-                # if instr.is_branch_rel16:
-                #     if instr.target_value is not None:
-                #         worklist.append((instr.target_value, func_entry, tree))
-                #     if instr.mnemonic == "lbra":
-                #         break
-                #     cur = pc_next
-                #     cur_rom = self.rom_config.get_mapped_address(cur, self.current_device)
-                #     continue
-
                 if instr.is_return:
                     break
 
