@@ -7,7 +7,7 @@ from sympy.logic.boolalg import Boolean
 from analyzer_core.analyze.instruction_parser import CalcInstructionParser
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.byte_interpreter import ByteInterpreter
-from analyzer_core.config.rom_config import RomConfig, RomScalingDefinition
+from analyzer_core.config.rom_config import RomConfig, RomScalingDefinition, ScalingFunctionIdentifier
 from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, RomSwitchDefinition
 from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableHelper as LutHelper
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
@@ -33,6 +33,9 @@ class SsmActionScalingFunction(SsmActionHelper):
         self.romid_entry = romid_entry
         self.mt_entry = mt_entry
 
+        # For scalings
+        self.current_scaling: Optional[RomScalingDefinition] = None
+
         # For use of switches
         self.use_switches_mode = False
         self.switch_defs: List[RomSwitchDefinition] = []
@@ -44,10 +47,14 @@ class SsmActionScalingFunction(SsmActionHelper):
         logger.debug(f"Running Scaling Function for MT Entry '{mt_entry.item_label}' {mt_entry.menu_item_str()} with scaling index {mt_entry.scaling_index}")
 
         self._ensure_scaling_disassembly()
-        self._add_function_mocks()
+        #self._add_function_mocks()
 
         # TODO hier auch dann Listen mit mehreren addresses
-        self.instr_parser = CalcInstructionParser(self.rom_cfg, self.emulator, read_addresses=[self.rom_cfg.address_by_name("ssm_rx_byte_2")])
+        self.instr_parser = CalcInstructionParser(
+            self.rom_cfg, 
+            self.emulator, 
+            read_addresses=[self.rom_cfg.address_by_name("ssm_rx_byte_2")],
+            )
         #self.instr_parser.init_new_instruction() already done in init of CalcInstructionParser
 
         self._emulate_receive_ssm_response()
@@ -95,39 +102,21 @@ class SsmActionScalingFunction(SsmActionHelper):
             self.emulator.add_logger("scaling_fn_ssm_rx_logger", self._trace_rx_value_calculation)
 
         def hook_pre_scaling_function(em: Emulator6303):
-            #logger.debug(f"hook_pre_scaling_function at {self.scaling_fn_ptr:04X}")
-            # TEST 28.11. self.emulator.hooks.add_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
             self.emulator.add_logger("scaling_fn_ssm_rx_logger", self._trace_rx_value_calculation)
         
         def hook_post_scaling_function(em: Emulator6303, access):
-            #print(f"hook_post_scaling_function at {self.scaling_fn_ptr:04X}", flush=True)
-            # TEST 28.11. self.emulator.hooks.remove_read_hook(self.rom_cfg.address_by_name("ssm_rx_byte_2"), hook_read_ssm_rx_bytes_in_scaling_fn)
             self.emulator.remove_logger("scaling_fn_ssm_rx_logger")
 
         self.emulator.hooks.add_pre_hook(self.scaling_fn_ptr, hook_pre_scaling_function)
         self.emulator.hooks.add_post_hook(self.scaling_fn_ptr, hook_post_scaling_function)
 
 
-        # ------ Definitions and hooks for Switches mode ------
-        # def mock_print_upper_screen(em: Emulator6303):
-        #     # Take upper and lower line as during this function call the variables should be set
-        #     self.upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
-        #     self.lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
-        #     #print(f"Upper Screen [{self.upper_screen_line}]", flush=True)
-        #     em.mock_return()
-        
-        #def mock_print_lower_screen(em: Emulator6303):
-        #    self.lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
-        #    #print(f"Lower Screen [{self.lower_screen_line}]", flush=True)
-        #    em.mock_return()
         
         def mock_hex_value_to_ssm_light(em: Emulator6303):
             '''
             When loaded: A: SSM rx byte, X: Pointer to switch labels
             Sets the SSM lights according to the switch definitions in SSM
             '''
-
-
             upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
             lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
 
@@ -162,31 +151,6 @@ class SsmActionScalingFunction(SsmActionHelper):
 
             em.mock_return()
 
-        #def hook_post_print_switch_screen(em: Emulator6303, access):
-            #self.use_switches_mode = True
-
-            # Mock the print functions to capture the switch labels
-            #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_upper_screen"), mock_print_upper_screen)
-            #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("print_lower_screen"), mock_print_lower_screen)
-
-            # Save the screen lines directly in this function only print_upper_screen is called, the other one happens after the Scaling fn
-            #self.upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y0_x0')
-            #self.lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, em, 'ssm_display_y1_x0')
-
-            # Mock the hex value printer entirely as it might be simpler than emulating it for all SSM values
-            #self.emulator.hooks.mock_function(self.rom_cfg.address_by_name("hex_value_to_ssm_light"), mock_hex_value_to_ssm_light)
-
-
-        # Add a hook to the function 'print_switch_screen' which is responsible to printing the switch values on a DIO
-        # Use this to enable Switches mode -> alternative: Check by name DIOx FAx
-        # Decompilation and detection happens on the first switch, so we hook this only after we know the function address
-
-        ######################################################
-        # TODO Funktioniert nur für EGi, bei den anderen reicht das nicht aus. Diese nutzen nciht diese Funktion print_switch_screen_from_addressIndex_pointer,
-        # die erst auf romid3 geht, sondern direkt print_upper_screen -> Also doch FAyxx
-        # und er muss auf std upper_ssm_lights dann seinen hook machen, nahc hex_value_to_ssm_light wird manchmal n0coh was gerechnet
-        #if self.rom_cfg.check_for_name("print_switch_screen"):
-        #    self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("print_switch_screen"), hook_post_print_switch_screen)
 
         if self.mt_entry.menu_item_str().startswith("FA"):
 
@@ -226,22 +190,54 @@ class SsmActionScalingFunction(SsmActionHelper):
         # Reset decimal value
         self.emulator.mem.write(self.rom_cfg.address_by_name('decimal_places'), 0)
 
+
     def run_function(self):
         """Emulate scaling function with multiple inputs to determine scaling."""
 
-        if self.scaling_fn_ptr in self.rom_cfg.scaling_addresses:
-            logger.debug(f"Scaling function at 0x{self.scaling_fn_ptr:04X} already known, skipping emulation.")
-            if self.mt_entry.item_label:
-                # TODO: Mapped adresse dann?? Sollte besser Rom sein
-                self.rom_cfg.scaling_addresses[self.scaling_fn_ptr].functions.append(self.mt_entry.item_label)
-            else:
-                logger.warning(f"Scaling function at 0x{self.scaling_fn_ptr:04X} has no item label.")
-            return
+        parse_new_scaling = True
+        decimal_places: int = -1
         
-        if self.scaling_fn_ptr == 0x32BA:
-            pass
+        ssm_inputs: List[int] = [0]   # initial TX values to test
+        seen_samples: set[int] = set()
+        emulated_output: dict[int, tuple[str, str]] = {}
+
+        eq_pieces: list[tuple[sp.Expr | None, Boolean]] = []
+
+        # TODO das reicht so nicht: der Pointer alleine kann ja mit mehreren Parametrn aufgerufen werden, sodass die Sclaings nicht passen
+        # suchfunktion bauen   get_scaling_functions
+        existing_scaling_canidates = self.rom_cfg.get_scaling_functions(self.current_device, self.scaling_fn_ptr)
+        if len(existing_scaling_canidates) > 0:
+
+            for identifier, current_scaling in existing_scaling_canidates.items():
+                # Loop through dependend values if exsisting and break if there's a mismatch
+                # The dependend values now contain dependency addresses like for the current_romid_scaling_index
+                for dependend_value in identifier.dependend_values:
+                    if self.emulator.mem.read(dependend_value[0]) != dependend_value[1]:
+                        logger.debug(f"Existing scaling function at 0x{self.scaling_fn_ptr:04X} has different dependend value at address {dependend_value[0]:04X}, expected {dependend_value[1]:02X}, skipping.")
+                        break
+                    # TODO ein break hier würde in die obere Schleife gehen, aber wenn andere Werte passen, würde es doch ein new scaling erwarten, anpassn
+                else:
+                    # Found the scaling function without further dependencies, or with all dependencies matching
+                    parse_new_scaling = False
+                    self.current_scaling = self.rom_cfg.scaling_addresses[identifier]
+
+                    if not self.mt_entry.item_label:
+                        raise ValueError(f"Scaling function at 0x{self.scaling_fn_ptr:04X} has no item label.")
+                    self.current_scaling.functions.append(self.mt_entry.item_label)
+                    # Take the tested input values from the existing scaling function, only check them
+                    ssm_inputs = list(self.current_scaling.tested_input_values)
+
+                    logger.debug(f"Scaling function at 0x{self.scaling_fn_ptr:04X} already known, skipping parsing.")
+                    break
+            
+        
+        if parse_new_scaling:
+            # To parse a new instruction, add loggers around the emulator to parse the steps.
+            self._add_function_mocks()      
+        
         
         # Also, save it as a global function address
+        # TODO IMPREZA96 CC 0x3793 funktioneirt nicht??
         if not self.rom_cfg.check_for_function_address(self.scaling_fn_ptr):
             fn_label_proto = f"fn_scaling_{self.current_device.name}_{self.mt_entry.item_label}"
             counter = 1
@@ -249,15 +245,6 @@ class SsmActionScalingFunction(SsmActionHelper):
                 counter += 1
             fn_label = f"{fn_label_proto}_{counter}"
             self.rom_cfg.add_refresh_mapped_function(name=fn_label, mapped_address=self.scaling_fn_ptr, current_device=self.current_device)
-        
-        decimal_places: int = -1
-        
-        ssm_inputs: List[int] = [0]   # initial TX values to test
-        seen_samples: set[int] = set()
-        #possible_index_values: list[int] = []
-        emulated_output: dict[int, tuple[str, str]] = {}
-
-        eq_pieces: list[tuple[sp.Expr | None, Boolean]] = []
 
         while ssm_inputs:
             rx_test_value = ssm_inputs.pop(0)
@@ -284,80 +271,94 @@ class SsmActionScalingFunction(SsmActionHelper):
                 logger.warning(f"Different decimal places detected during scaling function emulation: previous {decimal_places}, current {current_decimal_places}. Using maximum.")
                 decimal_places = max(decimal_places, current_decimal_places)
 
-            
-            #self.instr_parser.negate_current_expression_if_negative()
-
-            #if self.emulator.mem.read(self.rom_cfg.address_by_name('print_-_sign')) == 1:
-            #    self.instr_parser.negate_current_expression_if_negative()
 
             # To check the calculation afterwards, collect the display output from this run
             upper_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, self.emulator, 'ssm_display_y0_x0')
             lower_screen_line = SsmEmuHelper.get_screen_line(self.rom_cfg, self.emulator, 'ssm_display_y1_x0')
             emulated_output[rx_test_value] = (upper_screen_line, lower_screen_line)
-            
-            # Get jump conditions from guards to find new test inputs
-            for value in self.instr_parser.solve_jump_conditions():
-                if value not in seen_samples and value not in ssm_inputs:
-                    ssm_inputs.append(value)
 
-            # TODO Hier prüfen, ob noch ein x1 in der Expression ist, wenn nicht, den kompletten Buffer eingeben
+            # Analyze the parsed instructions from new functions
+            if parse_new_scaling:
+                # Get jump conditions from guards to find new test inputs
+                for value in self.instr_parser.solve_jump_conditions():
+                    if value not in seen_samples and value not in ssm_inputs:
+                        ssm_inputs.append(value)
 
-            current_expression = self.instr_parser.get_expression_or_buffer_value()
+                # TODO Hier prüfen, ob noch ein x1 in der Expression ist, wenn nicht, den kompletten Buffer eingeben
 
-            # Get current expression and conditions from the instruction parser and substitude to make simplification by sympy easier
-            subst_expression = LutHelper.substitute_lookup_tables(current_expression)
-            subst_conditions = [LutHelper.substitute_lookup_tables(cond) for cond in self.instr_parser.conditions]
+                current_expression = self.instr_parser.get_expression_or_buffer_value()
 
-            # Remove conditions that can't be solved, e.g. non-integer Ne
-            cleaned_subst_conditions = self.instr_parser.remove_unreachable_conditions(subst_conditions)
-            
-                    
-            eq_pieces.append((subst_expression, sp.And(*cleaned_subst_conditions))) # type: ignore
+                # Get current expression and conditions from the instruction parser and substitude to make simplification by sympy easier
+                subst_expression = LutHelper.substitute_lookup_tables(current_expression)
+                subst_conditions = [LutHelper.substitute_lookup_tables(cond) for cond in self.instr_parser.conditions]
 
-            # If the calculation only ran once and has no dependencies, we manuelly add samples for more reliable emulation comparisons
-            if len(seen_samples) == 1 and ssm_inputs == []: # TODO für switches aktuell sinnbefreit
-                for test_value in [128, 255]:
-                    if test_value not in seen_samples:
-                        ssm_inputs.append(test_value)
+                # Remove conditions that can't be solved, e.g. non-integer Ne
+                cleaned_subst_conditions = self.instr_parser.remove_unreachable_conditions(subst_conditions)
+                
+                
+                eq_pieces.append((subst_expression, sp.And(*cleaned_subst_conditions))) # type: ignore
 
-
-        # TODO Das dauert ewig bei vielen Bedingungen -> Text-Luts AC
-        logger.debug(f"Simplifying scaling function 0x{self.scaling_fn_ptr:04X} expression with {len(eq_pieces)} pieces...")
-        final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
+                # If the calculation only ran once and has no dependencies, we manuelly add samples for more reliable emulation comparisons
+                if len(seen_samples) == 1 and ssm_inputs == []: # TODO für switches aktuell sinnbefreit
+                    for test_value in [128, 255]:
+                        if test_value not in seen_samples:
+                            ssm_inputs.append(test_value)
 
 
-        # TODO Abfrage rein, ob in der final nicht wenigstens eine True bedingung ist? ansonsten wären ja Werte ungültig...
+        if parse_new_scaling:
+            # TODO Das dauert ewig bei vielen Bedingungen -> Text-Luts AC
+            logger.debug(f"Simplifying scaling function 0x{self.scaling_fn_ptr:04X} expression with {len(eq_pieces)} pieces...")
+            final_expr = self.instr_parser.finalize_simplify_equations(eq_pieces)
 
-        # The unit will be set during emulation, if not, the function shouldn't be called as the lower label index could be
-        # used for another purpose, e.g. SVX96 CCU
-        if self.instr_parser.print_unit_called is True:
-            self._set_unit()
 
-        # Check if we are in Switches mode where we don't need a static scaling but the switch values
-        # Switches are already handled in the mocks above
-        if not self.use_switches_mode:
-            current_scaling = RomScalingDefinition(
-                #scaling=sp.simplify(final_expr, force=True),
-                scaling=final_expr,
-                scaling_address_pointer = self.scaling_fn_ptr,
-                precision_decimals=decimal_places,
-                unit=self.unit,
-                lookup_tables=LutHelper.get_lookup_table_values(final_expr, self.instr_parser.symbol) if self.instr_parser.found_luts > 0 else None,
-                functions=[self.mt_entry.item_label] if self.mt_entry.item_label else []
-            )
+            # TODO Abfrage rein, ob in der final nicht wenigstens eine True bedingung ist? ansonsten wären ja Werte ungültig...
 
-            self._check_label_results(emulated_output, current_scaling)
-            self.rom_cfg.scaling_addresses[self.scaling_fn_ptr] = current_scaling
+            # The unit will be set during emulation, if not, the function shouldn't be called as the lower label index could be
+            # used for another purpose, e.g. SVX96 CCU
+            if self.instr_parser.print_unit_called is True:
+                self._set_unit()
+
+            # Check if we are in Switches mode where we don't need a static scaling but the switch values
+            # Switches are already handled in the mocks above
+            if not self.use_switches_mode:
+                self.current_scaling = RomScalingDefinition(
+                    #scaling=sp.simplify(final_expr, force=True),
+                    scaling=final_expr,
+                    scaling_address_pointer = self.scaling_fn_ptr,
+                    precision_decimals=decimal_places,
+                    unit=self.unit,
+                    lookup_tables=LutHelper.get_lookup_table_values(final_expr, self.instr_parser.symbol) if self.instr_parser.found_luts > 0 else None,
+                    functions=[self.mt_entry.item_label] if self.mt_entry.item_label else [],
+                    tested_input_values=seen_samples
+                )
+                self._check_label_results(emulated_output, self.current_scaling)
+                scaling_fn_identifier = ScalingFunctionIdentifier(
+                    mapped_address=self.scaling_fn_ptr, 
+                    current_device=self.current_device,
+                    dependend_values=tuple((addr, val) for addr, val in self.instr_parser.romid_dependend_addresses)
+                    )
+                self.rom_cfg.scaling_addresses[scaling_fn_identifier] = self.current_scaling
+
+        else:
+            if not self.use_switches_mode:
+                # TODO Dann auch für switches
+
+                assert self.current_scaling is not None, "Current scaling should not be None if we are in the else branch where we use an existing scaling function."
+
+                if self.current_scaling.unit is not None:
+                    self._set_unit()
+                self._check_label_results(emulated_output, self.current_scaling)
+
 
 
     def run_post_actions(self):
         pass
 
     def get_scaling_definition(self) -> RomScalingDefinition:
-        if self.scaling_fn_ptr not in self.rom_cfg.scaling_addresses:
-            raise RuntimeError("Scaling function has not been emulated yet, no scaling definition available.")
+        if self.current_scaling is None:
+            raise RuntimeError("Requested scaling definition, but none is available")
         
-        return self.rom_cfg.scaling_addresses[self.scaling_fn_ptr]
+        return self.current_scaling
 
     def get_switch_definitions(self) -> List[RomSwitchDefinition]:
         return self.switch_defs
@@ -377,6 +378,7 @@ class SsmActionScalingFunction(SsmActionHelper):
     def _check_label_results(self, emulated_output: dict[int, tuple[str, str]], scaling_definition: RomScalingDefinition) -> bool:
 
         # TODO Eigentlich ja auch notwendig, mittlere werte zu nehmen, wenn ein branch oder so drin ist?
+        # TODO sollte dann auch für Switchs gehen und dann bei den aufrufenden Funktionen für Switch genommen werden
 
         def get_label_result(self, line: str, has_lookup_tables: bool) -> float|str:
             label = line.strip()
@@ -423,7 +425,9 @@ class SsmActionScalingFunction(SsmActionHelper):
                     if calc_value.func.table_data[index] == label_result:
                         continue
                     else:
-                        raise NotImplementedError("Didn't expect a string LUT at this point")
+                        raise ValueError(f"Previously parsed scaling doesn't match for the current scaling."
+                                         f"Expected label '{calc_value.func.table_data[index]}', got '{label_result}' for RX value {rx_value}.\n"
+                                          "Was there a RomID dependency in the scaling function that's different for this MT entry?")
         
 
             # Round expr to the number of decimal places in scaling_definition

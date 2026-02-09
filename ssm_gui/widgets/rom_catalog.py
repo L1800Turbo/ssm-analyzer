@@ -1,6 +1,7 @@
 from dataclasses import asdict
 import dataclasses
 import enum
+import logging
 from pathlib import Path
 from PyQt6.QtCore import Qt, QModelIndex, QPoint, QAbstractItemModel
 from PyQt6.QtGui import QFontDatabase, QKeySequence, QBrush
@@ -16,6 +17,7 @@ from analyzer_core.config.ssm_model import CurrentSelectedDevice
 from analyzer_core.service import RomService
 from ssm_gui.models.romid_table_model import RomIdTableModel
 
+logger = logging.getLogger(__name__)
 
 class RomCatalogWidget(QWidget):
     def __init__(self, rom_services: dict[Path, RomService]):
@@ -81,6 +83,10 @@ class RomCatalogWidget(QWidget):
             for ecu in service.rom_cfg.selectable_devices:
                 current_ecu = QStandardItem(ecu.name)
                 current_rom.appendRow([current_ecu])
+
+                if not ecu in service.rom_cfg.romid_tables:
+                    logger.warning(f"No RomID table found for device {ecu.name} in ROM {path.name}")
+                    continue
 
                 romid_table = service.rom_cfg.romid_tables[ecu]
                 current_ecu.appendRow([QStandardItem("pointer_addr"), QStandardItem(f"0x{romid_table.relative_pointer_addr:02X}")])

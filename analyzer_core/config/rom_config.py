@@ -1,5 +1,5 @@
 from enum import Enum, auto
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, Union
 
 #from analyzer_core.analyze.lookup_table_helper import LookupTable
@@ -30,6 +30,16 @@ class RomVarDefinition:
 
     callers: Optional[list[int]] = None  # For functions and labels: list of addresses that call this function
 
+@dataclass(frozen=True)
+class ScalingFunctionIdentifier:
+    mapped_address: int
+    current_device: CurrentSelectedDevice   
+    
+
+    # When a scaling functions needs to be called multiple times as it's depending on RomID values
+    # E.g. IMPREZA96 cruise: 0x3793 gets called for two RomIDs, but the function inside depends on RomID[5] (current_romid_scaling_index)
+    dependend_values: tuple[tuple[ int, int ], ...] = field(default_factory=tuple)
+
 # TODO Noch sinnvoll hier:
 # RomVarType enthalt jetzt STIRNGS, aber was ist mit Adressen wie z.B. einer Mastertabelle und sowas? Also alles, was irgendwie "fix" im ROM klebt
     
@@ -57,7 +67,7 @@ class RomConfig:
         self.instructions: dict[int, Instruction] = {}
         self.call_tree: dict = {}
         self.action_addresses: set[int] = set()
-        self.scaling_addresses: dict[int, RomScalingDefinition] = {}
+        self.scaling_addresses: dict[ScalingFunctionIdentifier, RomScalingDefinition] = {}
         self.lookup_tables: dict[str, type["LookupTable"]] = {} # type: ignore
 
         # Pattern for detection
@@ -254,3 +264,9 @@ class RomConfig:
     
     def get_stack_pointer(self) -> int:
         return self.__stack_pointer
+    
+
+    def get_scaling_functions(self, current_device: CurrentSelectedDevice, mapped_address: int) -> dict[ScalingFunctionIdentifier, RomScalingDefinition]:
+        return { identifier: scaling for identifier, scaling in self.scaling_addresses.items() if identifier.mapped_address == mapped_address and identifier.current_device == current_device }
+
+        

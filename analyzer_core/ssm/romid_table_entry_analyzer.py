@@ -10,6 +10,8 @@ from analyzer_core.emu.memory_manager import MemoryManager
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
 from analyzer_core.emu.tracing import MemAccess
 
+logger = logging.getLogger(__name__)
+
 class RomIdEntryAnalyzer:
     """
     Hilfsklasse: analysiert / emuliert Verhalten für ein einzelnes RomId-Table-Entry.
@@ -17,7 +19,6 @@ class RomIdEntryAnalyzer:
     """
 
     def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, romid_table: RomIdTableInfo, entry: RomIdTableEntry_512kb):
-        self.logger = logging.getLogger(__name__)
 
         self.romid_table = romid_table
         self.entry = entry
@@ -94,7 +95,7 @@ class RomIdEntryAnalyzer:
         rom_cfg = self.rom_cfg
         self.current_request_romid_cmd = (0,0,0,0)
 
-        self.logger.debug(f"Running request_romid_save_romid function for {self.entry.print_romid_str()}...")
+        logger.debug(f"Running request_romid_save_romid function for {self.entry.print_romid_str()}...")
 
         def hook_get_ssm_receive_status(addr:int, val:int, mem: MemoryManager):
             #Current RomID request command we received
@@ -120,45 +121,40 @@ class RomIdEntryAnalyzer:
         def hook_set_current_romid_line_pointer(addr:int, val:int, mem: MemoryManager):
             # Just for debugging, to see when the RomID line pointer is set during the function
             set_romid_line_pointer = int.from_bytes(mem.read_bytes(self.rom_cfg.address_by_name('current_romid_line_pointer'),2), 'big')
-            self.logger.debug(f"current_romid_line_pointer set to {set_romid_line_pointer:04X} during request_romid_save_romid for RomID {self.entry.print_romid_str()}")
+            logger.debug(f"current_romid_line_pointer set to {set_romid_line_pointer:04X} during request_romid_save_romid for RomID {self.entry.print_romid_str()}")
 
             if(set_romid_line_pointer != self.entry.entry_ptr_address):
-                self.logger.debug(f"current_romid_line_pointer set for RomID {self.entry.print_romid_str()} during request_romid_save_romid, expected was {self.entry.entry_ptr_address:04X}, set value is {set_romid_line_pointer:04X}!")
-
+                logger.debug(f"current_romid_line_pointer set for RomID {self.entry.print_romid_str()} during request_romid_save_romid, expected was {self.entry.entry_ptr_address:04X}, set value is {set_romid_line_pointer:04X}!")
         # We don't really want to search the RomID, we already know it. So just return.
-        def mock_search_matching_romid(em: Emulator6303):
-            em.mock_return()
+        # def mock_search_matching_romid(em: Emulator6303):
+        #     em.mock_return()
 
-            # search_matching_romid defines if it's an Axx RomID, set it manually
-            if current_device == CurrentSelectedDevice.EGI and (self.entry.romid0 & 0xA0) == 0xA0:
-                self.emulator.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x1)
-            else:
-                self.emulator.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x0)
+        #     # search_matching_romid defines if it's an Axx RomID, set it manually
+        #     if current_device == CurrentSelectedDevice.EGI and (self.entry.romid0 & 0xA0) == 0xA0:
+        #         self.emulator.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x1)
+        #     else:
+        #         self.emulator.write8(rom_cfg.address_by_name('romid_EGi_Axxx_scheme'), 0x0)
 
-            # AT Axx RomIDs don't exist before '97
-            if rom_cfg.check_for_name('romid_AT_Axxx_scheme'):
-                if current_device == CurrentSelectedDevice.AT and (self.entry.romid0 >> 8) == 0xA:
-                    self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x1)
-                else:
-                    self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x0)
+        #     # AT Axx RomIDs don't exist before '97
+        #     if rom_cfg.check_for_name('romid_AT_Axxx_scheme'):
+        #         if current_device == CurrentSelectedDevice.AT and (self.entry.romid0 >> 8) == 0xA:
+        #             self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x1)
+        #         else:
+        #             self.emulator.write8(rom_cfg.address_by_name('romid_AT_Axxx_scheme'), 0x0)
             
-            # Copy RomID values, this usually also happens in search_matching_romid
-            self.emulator.write8(rom_cfg.address_by_name('romid_0_2'), self.entry.romid0)
-            self.emulator.write8(rom_cfg.address_by_name('romid_1_2'), self.entry.romid1)
-            self.emulator.write8(rom_cfg.address_by_name('romid_2_2'), self.entry.romid2)
+        #     # Copy RomID values, this usually also happens in search_matching_romid
+        #     self.emulator.write8(rom_cfg.address_by_name('romid_0_2'), self.entry.romid0)
+        #     self.emulator.write8(rom_cfg.address_by_name('romid_1_2'), self.entry.romid1)
+        #     self.emulator.write8(rom_cfg.address_by_name('romid_2_2'), self.entry.romid2)
 
 
         # Get the right funktion pointer
-        try:
-            search_matching_romid_ptr = rom_cfg.address_by_name("search_matching_romid_96")
-        except RomEmulationError:
-            search_matching_romid_ptr = rom_cfg.address_by_name("search_matching_romid_97")
+        # try:
+        #     search_matching_romid_ptr = rom_cfg.address_by_name("search_matching_romid_96")
+        # except RomEmulationError:
+        #     search_matching_romid_ptr = rom_cfg.address_by_name("search_matching_romid_97")
 
-        if self.entry.ssm_cmd_protocols is None or len(self.entry.ssm_cmd_protocols) == 0:
-            raise RomEmulationError(f"Can't request RomID for {self.entry.romid0:02X} {self.entry.romid1:02X} {self.entry.romid2:02X} without knowing SSM command and protocol!")
-
-        # For multiple SSM commands and Protocols we have to run the function multiple times
-        for ssm_cmd, ssm_protocol in self.entry.ssm_cmd_protocols:
+        def test_ssm_protocol(ssm_cmd, ssm_protocol):
             # Set the current SSM command and protocol in memory before running the function
             current_ssm_cmd = self.rom_cfg.address_by_name("current_ssm_cmd")
             current_ssm_protocol_version = self.rom_cfg.address_by_name("current_ssm_protocol_version")
@@ -166,10 +162,10 @@ class RomIdEntryAnalyzer:
             self.emulator.write8(current_ssm_protocol_version, ssm_protocol)
 
             # Get the right funktion pointer
-            try:
-                search_matching_romid_ptr = self.rom_cfg.address_by_name("search_matching_romid_96")
-            except RomEmulationError:
-                search_matching_romid_ptr = self.rom_cfg.address_by_name("search_matching_romid_97")   
+            #try:
+            #    search_matching_romid_ptr = self.rom_cfg.address_by_name("search_matching_romid_96")
+            #except RomEmulationError:
+            #    search_matching_romid_ptr = self.rom_cfg.address_by_name("search_matching_romid_97")   
 
             # Reset the PC to the start of the function
             self.emulator.set_pc(self.rom_cfg.address_by_name("request_romid_save_romid"))
@@ -182,6 +178,14 @@ class RomIdEntryAnalyzer:
             self.emulator.hooks.add_write_hook(self.rom_cfg.address_by_name('current_romid_line_pointer')+1, hook_set_current_romid_line_pointer)
 
             self.emulator.run_function_end()
+
+
+        if self.entry.ssm_cmd_protocols is None or len(self.entry.ssm_cmd_protocols) == 0:
+            raise RomEmulationError(f"Can't request RomID for {self.entry.romid0:02X} {self.entry.romid1:02X} {self.entry.romid2:02X} without knowing SSM command and protocol!")
+
+        # For multiple SSM commands and Protocols we have to run the function multiple times
+        for ssm_cmd, ssm_protocol in self.entry.ssm_cmd_protocols:
+            test_ssm_protocol(ssm_cmd, ssm_protocol)
 
             # Get static and emulated RomID parts for comparison
             romid_parts = (self.entry.romid0, self.entry.romid1, self.entry.romid2)
@@ -196,6 +200,12 @@ class RomIdEntryAnalyzer:
             if romid_parts != emulator_parts:
                 # Take this protocol out of the list, it doesn't work
                 self.entry.ssm_cmd_protocols.remove((ssm_cmd, ssm_protocol))
+        
+        if len(self.entry.ssm_cmd_protocols) > 1:
+            raise NotImplementedError(f"Multiple SSM command and protocol combinations found for RomID {self.entry.print_romid_str()}: {[(hex(cmd), hex(proto)) for cmd, proto in self.entry.ssm_cmd_protocols]}, but handling this is not implemented yet!")
+        
+        # After testing all protocols including the wrong ones, we should run one time with a working protocol to adjust the memory
+        test_ssm_protocol(self.entry.ssm_cmd_protocols[0][0], self.entry.ssm_cmd_protocols[0][1])
 
         self.entry.request_romid_cmd = self.current_request_romid_cmd
 
@@ -232,7 +242,7 @@ class RomIdEntryAnalyzer:
         
         current_romid_line_pointer_value = self.emulator.read16(current_romid_line_pointer_addr)
         if current_romid_line_pointer_value != self.entry.entry_ptr_address:
-            self.logger.debug(f"Before executing set_current_romid_values, current_romid_line_pointer is {current_romid_line_pointer_value:04X}, expected is {self.entry.entry_ptr_address:04X} for RomID {self.entry.print_romid_str()}!")
+            logger.debug(f"Before executing set_current_romid_values, current_romid_line_pointer is {current_romid_line_pointer_value:04X}, expected is {self.entry.entry_ptr_address:04X} for RomID {self.entry.print_romid_str()}!")
         
         read_addresses: set[int] = set()
         
@@ -240,7 +250,7 @@ class RomIdEntryAnalyzer:
 
         # If there were read addresses during RomID setup, we need to analyze them as they influence which RomID table is selected
         if len(read_addresses) == 1:
-            self.logger.warning(f"execute_set_current_romid_values: read addresses during RomID setup: {[hex(addr) for addr in read_addresses]}")
+            logger.warning(f"execute_set_current_romid_values: read addresses during RomID setup: {[hex(addr) for addr in read_addresses]}")
             # TODO hier etwas mit den Adressen machen, bsp SVX96: es gibt 2x AC-Tabellen mit einer RomID, die aber ein bit an 0x0015 auslesen und avon abhängig machen, welche Tabelle genutzt wird.
             # TODO Struktur ermitteln, die dann gleiche RomIDs ermöglicht, ist ja letztlich nur eine Liste, aber es fehlt dann ein bestimmtdes Flag in der Definition
 

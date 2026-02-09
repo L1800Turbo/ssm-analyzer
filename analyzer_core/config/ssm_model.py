@@ -31,6 +31,12 @@ class RomIdTableInfo:
     entries: list[Union["RomIdTableEntry_256kb", "RomIdTableEntry_512kb"]]
 
 
+
+# TODO Die ganzen Klassen sollten nochmal überarbeitet werden:
+# -> nur RAW-Daten rein, damit die immer direkt gelesen werden können, die weiteren Informationen sollten in eine eigene Klasse
+# -> dann klappt das mit den 256kb auch besser spoätetr
+# -> benennung der Klassen nach byte-Breite, nicht nach kassette. bei den 256kb Roms wird es sich noch andere Ausnahmen geben
+
 @dataclass
 class RomIdTableEntry:
     romid0:int
@@ -176,6 +182,7 @@ class RomScalingDefinition:
     unit: Optional[str] = None
     functions: list[str] = field(default_factory=list)
     lookup_tables: Optional[dict[int|str, int|str]] = field(default_factory=dict)
+    tested_input_values: set[int] = field(default_factory=set) # With which input values was this scaling determined?
 
 @dataclass
 class RomSwitchDefinition:

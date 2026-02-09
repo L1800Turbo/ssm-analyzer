@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 import logging
-from typing import Optional
+from typing import Any, Optional
 from analyzer_core.config.ssm_model import ActionType, CurrentSelectedDevice, MasterTableEntry, MasterTableInfo, RomIdTableEntry_512kb, RomIdTableInfo, RomScalingDefinition, RomSwitchDefinition
 
 @dataclass(frozen=True)
@@ -11,6 +11,10 @@ class MastertableIdentifier:
     romid: int  # Combined romid0, romid1, romid2 as integer
 
     dependend_values: Optional[tuple[ int, int ]] = None  # e.g., SVX96 AC: 2 Mastertables with 1 RomID but dependend on readout values
+
+    def __str__(self):
+        dependend_str = f", dependend_values={self.dependend_values}" if self.dependend_values else ""
+        return f"MastertableIdentifier(romid=0x{self.romid:06X}{dependend_str})"
 
 @dataclass
 class SimpleMasterTableEntry:
@@ -55,6 +59,8 @@ class SimpleMasterTable:
     # ajustments
     # ...
     
+class RomMismatchError(Exception):
+    pass
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +78,16 @@ class RomIdTableCollector:
                     raise NotImplementedError("Only RomIdTableEntry_512kb is currently supported")
     
     def add_romid_table(self, device:CurrentSelectedDevice, ssm_romid_table:RomIdTableEntry_512kb):
+
+        def compare_entries(entry: SimpleMasterTableEntry, no_possible_entries:int, entries: dict[str, Any]) -> bool:
+            for i in range(1, no_possible_entries+1):
+                existing_label = f"{entry.label}_{i}"
+                if existing_label in entries:
+                    existing_entry = entries[existing_label]
+                    if existing_entry == entry:
+                        return True
+            
+            raise RomMismatchError(f"Conflict detected for device {device.name}, RomID {current_romid:06X}, entry {entry.label}")
 
         if not device in self.romid_tables:
             self.romid_tables[device] = {}
@@ -123,6 +139,7 @@ class RomIdTableCollector:
                 if entry is None:
                     continue  # unsupported action, skip for now
 
+                # Determine the number of labels and create a unique label if a new one will need to be created
                 counter = 1
                 entry_label = f"{entry.label}_{counter}"
                 while entry_label in self.romid_tables[device][current_identifier].measurements:
@@ -139,14 +156,11 @@ class RomIdTableCollector:
 
                 # Otherwise, compare existing entrys
                 else:
-                    if entry_label not in self.romid_tables[device][current_identifier].measurements:
-                        raise NotImplementedError(f"New entry {entry_label} for device {device.name}, RomID identifier {current_identifier} not found in existing RomID table! Is this a second RomID table with the same RomID?")
-                    existing_entry = self.romid_tables[device][current_identifier].measurements[entry_label]
-                    
-                    if existing_entry != entry:
-                        raise ValueError(f"Conflict detected for device {device.name}, RomID {current_romid:06X}, entry {entry.label}!")
-
-
+                    # Loop over all existing entrys with the same label and check if one matches, otherwise raise conflict
+                    if isinstance(entry, SimpleMeasurement):
+                        compare_entries(entry, counter, self.romid_tables[device][current_identifier].measurements)
+                    elif isinstance(entry, SimpleSwitchDefinition):
+                        compare_entries(entry, counter, self.romid_tables[device][current_identifier].switches)
         
     
     def __get_create_scaling(self, action_name: str, ecu_addresses: set[int], ssm_scaling: RomScalingDefinition) -> SimpleMeasurement:

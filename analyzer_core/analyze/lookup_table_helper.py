@@ -270,6 +270,8 @@ class LookupTableHelper:
                 #lut_index = lut_index.doit()
                 #lut_index = sp.Integer(expr.args[0])
 
+                # TODO das mit eval passt alles noch nciht und wird auch nicht korrekt aufgerufen, z.B. ATFT mit LUT
+
                 if lut_func.is_String:
                     value = lut_func.table_data[int(lut_index)]
                     return value
@@ -313,16 +315,11 @@ class LookupTableHelper:
                 # bei Gt, LT, usw. kommt das Ganze nochmal, dort wird allerdings nicht evaluiert, wenn die LUT
                 # nur ein Teil der Gleichung ist.
                 luts: set[LookupTable] = curr_expr.atoms(LookupTable)
-                if len(curr_expr.free_symbols) > 0 and luts: #LookupTableHelper.is_lut(curr_expr): # curr_expr.has(symbol):
+                if len(curr_expr.free_symbols) > 0 and luts:
                     for lut in luts:
                         for idx in lut.func.table_data.keys():
-
-                            expr_eval = curr_expr.subs({symbol: idx}) 
-
-
-                            #expr_eval: sp.Expr = curr_expr.subs(lut, 23) # tkype: ignore lut.func.table_data[idx]
+                            expr_eval = curr_expr.subs({symbol: idx}) # type: ignore
                             lut_values[idx] = eval_expression(expr_eval)
-                            #possible_index_values.append(idx)
 
                             # TODO wenn ein weiteres x1 drin ist, würde das nicht evaluiert..
                 else:
@@ -330,8 +327,7 @@ class LookupTableHelper:
             elif isinstance(cond, (sp.Gt, sp.Lt, sp.Ge, sp.Le)):
                 
                 if len(curr_expr.free_symbols) > 0 and LookupTableHelper.is_lut(curr_expr):
-                #if len(curr_expr.free_symbols) > 0 and curr_expr.atoms(LookupTable):
-                    for idx in curr_expr.func.table_data.keys():
+                    for idx in curr_expr.func.table_data.keys(): #type: ignore
                         # Check if idx satisfies the condition
                         if cond.subs({symbol: idx}): # type: ignore
                             expr_eval: sp.Expr = curr_expr.subs({symbol: idx}) # type: ignore
