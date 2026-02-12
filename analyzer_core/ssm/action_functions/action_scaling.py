@@ -8,7 +8,7 @@ from analyzer_core.analyze.instruction_parser import CalcInstructionParser
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.config.rom_config import RomConfig, RomScalingDefinition, ScalingFunctionIdentifier
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, RomSwitchDefinition
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntryInfo, RomSwitchDefinition
 from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableHelper as LutHelper
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.disasm.insn_model import Instruction
@@ -26,7 +26,7 @@ class SsmActionScalingFunction(SsmActionHelper):
             rom_cfg: RomConfig, 
             emulator: Emulator6303, 
             current_device: CurrentSelectedDevice, 
-            romid_entry:RomIdTableEntry_512kb, 
+            romid_entry:RomIdTableEntryInfo, 
             mt_entry: MasterTableEntry) -> None:
         super().__init__(rom_cfg, emulator)
         self.current_device = current_device
@@ -189,7 +189,11 @@ class SsmActionScalingFunction(SsmActionHelper):
 
         # Reset decimal value
         self.emulator.mem.write(self.rom_cfg.address_by_name('decimal_places'), 0)
-
+        
+    def _hook_ccu_clear_rx_fifo(self, em: Emulator6303):
+        # Simulate clear the RX FIFO flag to let the function always run for the first time.
+        # In that case, it doesn't set a busy flag and the scaling function can proceed.
+        self.emulator.mem.write(self.rom_cfg.address_by_name("CC_flag_clear_RX_FIFO"), 0)
 
     def run_function(self):
         """Emulate scaling function with multiple inputs to determine scaling."""
@@ -213,7 +217,7 @@ class SsmActionScalingFunction(SsmActionHelper):
                 # The dependend values now contain dependency addresses like for the current_romid_scaling_index
                 for dependend_value in identifier.dependend_values:
                     if self.emulator.mem.read(dependend_value[0]) != dependend_value[1]:
-                        logger.debug(f"Existing scaling function at 0x{self.scaling_fn_ptr:04X} has different dependend value at address {dependend_value[0]:04X}, expected {dependend_value[1]:02X}, skipping.")
+                        logger.debug(f"Existing scaling function at 0x{self.scaling_fn_ptr:04X} has different dependend value at address {self.rom_cfg.get_name_or_address(dependend_value[0])}, expected 0x{dependend_value[1]:02X}, skipping.")
                         break
                     # TODO ein break hier würde in die obere Schleife gehen, aber wenn andere Werte passen, würde es doch ein new scaling erwarten, anpassn
                 else:
@@ -233,13 +237,22 @@ class SsmActionScalingFunction(SsmActionHelper):
         
         if parse_new_scaling:
             # To parse a new instruction, add loggers around the emulator to parse the steps.
-            self._add_function_mocks()      
+            # On existing scalings, the parser will not be started
+            self._add_function_mocks()
+        
+        # CCU: CANCEL and OUTPUT use an RX FIFO. Only known when Cruise is disassembled
+        if self.rom_cfg.check_for_name("CC_flag_clear_RX_FIFO"):
+            self.emulator.hooks.add_pre_hook(self.rom_cfg.address_by_name("save_count_rx_value_fifo"), self._hook_ccu_clear_rx_fifo)
+        
         
         
         # Also, save it as a global function address
         # TODO IMPREZA96 CC 0x3793 funktioneirt nicht??
         if not self.rom_cfg.check_for_function_address(self.scaling_fn_ptr):
-            fn_label_proto = f"fn_scaling_{self.current_device.name}_{self.mt_entry.item_label}"
+            if self.use_switches_mode:
+                fn_label_proto = f"fn_switches_{self.current_device.name}_{self.mt_entry.item_label}"
+            else:
+                fn_label_proto = f"fn_scaling_{self.current_device.name}_{self.mt_entry.item_label}"
             counter = 1
             while self.rom_cfg.check_for_name(f"{fn_label_proto}_{counter}"):
                 counter += 1
@@ -299,7 +312,7 @@ class SsmActionScalingFunction(SsmActionHelper):
                 eq_pieces.append((subst_expression, sp.And(*cleaned_subst_conditions))) # type: ignore
 
                 # If the calculation only ran once and has no dependencies, we manuelly add samples for more reliable emulation comparisons
-                if len(seen_samples) == 1 and ssm_inputs == []: # TODO für switches aktuell sinnbefreit
+                if len(seen_samples) == 1 and ssm_inputs == [] and not self.use_switches_mode: # TODO für switches aktuell sinnbefreit
                     for test_value in [128, 255]:
                         if test_value not in seen_samples:
                             ssm_inputs.append(test_value)
@@ -447,7 +460,7 @@ class SsmActionScalingFunction(SsmActionHelper):
             else:
                 quant = Decimal("1")
 
-            if sp.Float(calc_value) != label_result:
+            if sp.Float(calc_value) != sp.Float(label_result):
                 #if label_result == 0 and sp.Abs(calc_value) <= sp.Float(0.1):
                 if (Decimal(label_result) - calc_value).quantize(quant) <= quant: # type: ignore
                     # Workaround for rounding issues

@@ -11,7 +11,6 @@ from pyparsing import Callable
 from analyzer_core.analyze.lookup_table_helper import LookupTable, LookupTableAccess, LookupTableHelper
 from analyzer_core.config.memory_map import MemoryRegion, RegionKind, RegionKind
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import RomIdTableEntry_512kb
 from analyzer_core.disasm.capstone_wrap import OperandType
 from analyzer_core.disasm.insn_model import Instruction
 from analyzer_core.emu.emulator_6303 import Emulator6303
@@ -276,6 +275,7 @@ class CalcInstructionParser:
         
         elif access.instr.target_value in self.dependend_romid_adresses:
             self.romid_dependend_addresses.add((access.instr.target_value, self.emulator.mem.read(access.instr.target_value)))
+            self.calc_register_involed = False
 
         elif self.__is_register_match(self.new_calc_register, register):
             # On string based LUTs this happens quite often, so don't show a warning each time
@@ -314,7 +314,14 @@ class CalcInstructionParser:
             if self._check_for_rom_address(possible_lut_address):
                 if self.lut_access.address_defined():
                     if self.lut_access.get_lut_ptr_modified():
-                        self.lut_access.lut_expr = self.current_expr - sp.Integer(self.lut_access.get_lut_address())
+                        # TODO das in add_set_lookup_table auslagern?
+                        # Check if the LUT offset is already defined in the expression (usually by calculations with xgdx)
+                        # In that case, substract it to get the LUT index expression
+                        if sp.Integer(self.lut_access.get_lut_address()) in self.current_expr.as_ordered_terms():
+                            self.lut_access.lut_expr = self.current_expr - sp.Integer(self.lut_access.get_lut_address())
+                        else:
+                            self.lut_access.lut_expr = self.current_expr
+                        
                         # Define a lookup table and collect new possible index values
                         self.possible_index_values.extend(self.add_set_lookup_table())
                     else:
@@ -402,27 +409,56 @@ class CalcInstructionParser:
             if cond == False:
                 raise NotImplementedError("Condition is always false, no solution possible. TODO")
             # Generic case: solve eq for self.symbol
-            eq = sp.Eq(cond.lhs, cond.rhs) # TODO War 0
+            eq = sp.Eq(cond.lhs, cond.rhs)
             # Generic case: solve eq for self.symbol
             lut_funcs = [f for f in cond.lhs.atoms(sp.Function) if isinstance(f, LookupTable)]
             if lut_funcs:
                 # For each found LUT: find all indices for which LUT(index) == 0
                 for lut in lut_funcs:
                     # Try to get the argument of the LUT
-                    arg = lut.args[0]
+                    #arg = lut.args[0]
                     # Check for indices where LUT(arg) == rhs (usually 0)
-                    indices = lut.func.preimage(eq.rhs)
-                    for idx in indices:
-                        # If arg == self.symbol, idx is directly a test value
-                        # If arg is an expression (e.g. 2*x1), solve for self.symbol
-                        if arg == self.symbol:
-                            solved_values.add(sp.Integer(idx))
-                        else:
-                            # Solve e.g. 2*x1 == idx to x1
-                            sols = sp.solve(sp.Eq(arg, idx), self.symbol)
-                            for s in sols:
-                                if s.is_real and 0 <= s <= 255:
-                                    solved_values.add(int(s))
+                    #indices = lut.func.preimage(eq.rhs)
+
+                    #min_dist = min(abs(sp.Integer(val) - eq.rhs) for val in lut.func.table_data.values())
+                    #indices = [idx for idx, val in lut.func.table_data.items() if abs(sp.Integer(val) - eq.rhs) == min_dist]
+
+                    # If we got an empty set, it means that there are no indices for which the LUT value is exactly eq.rhs
+                    # Check for the next related indices, only for integer LUTs
+                    # if indices is not sp.EmptySet:
+                    #     for idx in indices:
+                    #         # If arg == self.symbol, idx is directly a test value
+                    #         # If arg is an expression (e.g. 2*x1), solve for self.symbol
+                    #         if arg == self.symbol:
+                    #             solved_values.add(sp.Integer(idx))
+                    #         else:
+                    #             # Solve e.g. 2*x1 == idx to x1
+                    #             sols = sp.solve(sp.Eq(arg, idx), self.symbol)
+                    #             for s in sols:
+                    #                 if s.is_real and 0 <= s <= 255:
+                    #                     solved_values.add(int(s))
+                    # else:
+
+
+
+                    # Loop over all LUT value indexes, insert into the expression and check the distance to the right hand side value.
+                    # Find the nearest neighbor solution, take this as a zero point and add it as a solved value.
+                    min_dist = None
+                    nearest_index = None
+                    for x_val, y_val in lut.func.table_data.items():
+                        # left hand side value with substituted index
+                        val = eq.lhs.subs(self.symbol, x_val)
+                        # Distance to the right hand side value as nearest neighbor solution
+                        dist = abs(sp.Integer(val) - eq.rhs)
+                        if min_dist is None or dist < min_dist:
+                            min_dist = dist
+                            nearest_index = x_val
+                    
+                    if nearest_index is None:
+                        raise RuntimeError("Couldn't find nearest index for LUT condition solving, but expected at least one.")
+                    solved_values.add(int(nearest_index))
+
+                    
             else:
                 # Generic case: solve eq for self.symbol
                 sols = sp.solve(eq, self.symbol)
@@ -547,7 +583,7 @@ class CalcInstructionParser:
                 if isinstance(cond, sp.And) and all(isinstance(arg, sp.Ne) for arg in cond.args):
                     symplified_conds.append(self._fast_simplify_condition(cond))
                 else:
-                   symplified_conds.append(sp.simplify(self._fast_simplify_condition(cond))) # TODO funktioniert nicht bei SVX96 AC 0x2566
+                   symplified_conds.append(sp.simplify(self._fast_simplify_condition(cond))) # r TODO funktioniert nicht bei SVX96 AC 0x2566
                 #symplified_conds.append(sp.simplify(cond)) # type: ignore
             condition = sp.Or(*symplified_conds)
             #simplified_condition = sp.simplify(condition, force=True)
@@ -802,9 +838,6 @@ class CalcInstructionParser:
         self.read_addresses = [self.rom_cfg.address_by_name("buffered_ssm_rx_byte_2")]
         self.raw_calculations.append(f"Using buffered SSM RX byte from address {self.read_addresses[0]} for further calculations.")
 
-        # Simulate clear the RX FIFO flag to let the function always run for the first time.
-        # In that case, it doesn't set a busy flag and the scaling function can proceed.
-        self.emulator.mem.write(self.rom_cfg.address_by_name("CC_flag_clear_RX_FIFO"), 0)
         
 
 

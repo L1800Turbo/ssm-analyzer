@@ -1,6 +1,6 @@
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, MasterTableInfo, RomEmulationError, RomIdTableEntry_512kb
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, MasterTableInfo, RomEmulationError, RomIdTableEntryInfo, RomIdTableEntryRaw12
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.ssm.master_table_entry_analyzer import MasterTableEntryAnalyzer
@@ -11,7 +11,7 @@ class MasterTableAnalyzer:
     Static analysis of SSM code to collect master table entries
     '''
     
-    def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, romid_entry : RomIdTableEntry_512kb):
+    def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, romid_entry : RomIdTableEntryInfo) -> None:
         self.emulator = emulator
         self.rom_cfg = rom_cfg
         self.__romid_entry = romid_entry

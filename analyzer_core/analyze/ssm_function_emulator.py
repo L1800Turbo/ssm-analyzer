@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 from analyzer_core.config.memory_map import MemoryMap
 from analyzer_core.config.rom_config import OFFSET_PIN_ASSIGNMENTS, RomConfig
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableInfo, RomIdTableEntry_256kb, RomIdTableEntry_512kb, RomIdTableInfo
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, RomIdTableInfo
 from analyzer_core.data.rom_image import RomImage
 from analyzer_core.emu.asm_html_logger import AsmHtmlLogger
 from analyzer_core.emu.emulator_6303 import Emulator6303
@@ -25,8 +25,6 @@ class SsmFunctionEmulator:
 
         self.rom_image = rom_image
         self.rom_cfg = rom_cfg
-
-        #self.emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg)
 
     def run_ssm_functions(self):
         self.__execute_offset_function()
@@ -59,9 +57,6 @@ class SsmFunctionEmulator:
 
         # Loop over all thinkable (not yet known if possible) ECU types 
         for current_device in CurrentSelectedDevice:
-
-            #self.emulator.set_current_device(current_device)
-
             # Initialize an emulator seperately for each run
             emulator = Emulator6303(rom_image=self.rom_image, rom_config=self.rom_cfg, current_device=current_device)
             emulator.set_pc(start_address)
@@ -106,16 +101,10 @@ class SsmFunctionEmulator:
 
             # Set the current device in memory before running the function
             emulator.write8(current_selected_device_addr, current_device.value)
-
             emulator.run_function_end()
 
-            # If there was never the RomID table value written, this selected device doesn't exist on the cassette
-            # Otherwise add it to the possible ones
-
-            # TODO Das reicht so nicht, in SELECT_SYSTEM wird bei svx97 ein AND 0x0F gemacht und ABS fliegt raus, heir wird er aber gesetzt
-            #if romid_table_pointer in self.emulator.mem.get_written_memory_addresses():
-            #    self.rom_cfg.selectable_devices.append(current_device)
-            #else:
+            # TODO DEBUG
+            #if current_device is not CurrentSelectedDevice.CC:
             #    continue
 
             # Take the offset for the current device

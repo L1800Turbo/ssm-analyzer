@@ -23,61 +23,36 @@ class CurrentSelectedDevice(IntEnum):
 
 @dataclass
 class RomIdTableInfo:
-    #device: "CurrentSelectedDevice"
     relative_pointer_addr: int
     length: int
 
-    #entries: list["RomIdTableEntry_512kb"] # TODO und die andere?
-    entries: list[Union["RomIdTableEntry_256kb", "RomIdTableEntry_512kb"]]
+
+    entries: list["RomIdTableEntryInfo"]
 
 
-
-# TODO Die ganzen Klassen sollten nochmal überarbeitet werden:
-# -> nur RAW-Daten rein, damit die immer direkt gelesen werden können, die weiteren Informationen sollten in eine eigene Klasse
-# -> dann klappt das mit den 256kb auch besser spoätetr
-# -> benennung der Klassen nach byte-Breite, nicht nach kassette. bei den 256kb Roms wird es sich noch andere Ausnahmen geben
 
 @dataclass
-class RomIdTableEntry:
-    romid0:int
-    romid1:int
-    romid2:int
+class RomIdTableEntryInfo:
+    '''
+    Analyzed RomID table entry, containing all information from the raw entry and additional information from the emulation
+    '''
+    romid0: int
+    romid1: int
+    romid2: int
 
     scaling_index:int
     label_index:int
     menuitems_index:int
-    ecu_addresses_rel:int # Needs offset adaption on some ECUs
+    ecu_addresses_rel:int
 
-@dataclass
-class RomIdTableEntry_256kb(RomIdTableEntry):
-    entry_size=0 # TODO, wie breit?
+    #entry_size: int
 
-    struct_format = "<B" # Dummy, da noch nicht definiert
-    entry_size = struct.calcsize(struct_format)  # = 12 Bytes
+    master_table_address_rel: Optional[int] = None # RomID table with 12 byte
 
-    ssm_year: Optional[int] = None  # TODO Das eigentlich noch nach oben, aber wie füllt man dann die RomIDtabelle vernünftig
-    ssm_model: Optional[str] = None
-
-    @classmethod
-    def from_bytes(cls, table_bytes:bytes) -> "RomIdTableEntry_512kb":
-        unpacked = struct.unpack(cls.struct_format, table_bytes)
-        return RomIdTableEntry_512kb(*unpacked)
-    
-
-
-@dataclass
-class RomIdTableEntry_512kb(RomIdTableEntry):
-    '''
-    RomID table as used on '96 onwards
-    '''
-    master_table_address_rel:int # Needs offset adaption on some ECUs
-    romid_a:int #<!-- Adjustment index only high byte! --><!-- TODO: und Error 66 check flag in HI -->
-    tbd_b:int
-    romid_model_index:int
-    flagbytes:int
-
-    struct_format = ">BBBBBBHHBBBB"
-    entry_size = struct.calcsize(struct_format)  # = 12 Bytes
+    romid_a: Optional[int] = None
+    tbd_b: Optional[int] = None
+    romid_model_index: Optional[int] = None
+    flagbytes: Optional[int] = None
 
     ssm_cmd_protocols: Optional[list[tuple[int,int]]] = None
     request_romid_cmd: Optional[tuple[int,int,int,int]] = None
@@ -111,19 +86,67 @@ class RomIdTableEntry_512kb(RomIdTableEntry):
 
     master_table: Optional["MasterTableInfo"] = None
 
-    @classmethod
-    def from_bytes(cls, table_bytes:bytes) -> "RomIdTableEntry_512kb":
-        unpacked = struct.unpack(cls.struct_format, table_bytes)
-        return RomIdTableEntry_512kb(*unpacked)
-    
     def print_romid_str(self):
         return f"{self.romid0:02X} {self.romid1:02X} {self.romid2:02X}"
+
+# TODO Die ganzen Klassen sollten nochmal überarbeitet werden:
+# -> nur RAW-Daten rein, damit die immer direkt gelesen werden können, die weiteren Informationen sollten in eine eigene Klasse
+# -> dann klappt das mit den 256kb auch besser spoätetr
+# -> benennung der Klassen nach byte-Breite, nicht nach kassette. bei den 256kb Roms wird es sich noch andere Ausnahmen geben
+
+@dataclass
+class RomIdTableEntryRaw:
+    romid0:int
+    romid1:int
+    romid2:int
+
+    scaling_index:int
+    label_index:int
+    menuitems_index:int
+    ecu_addresses_rel:int # Needs offset adaption on some ECUs
+
+
+
+@dataclass
+class RomIdTableEntryRaw8(RomIdTableEntryRaw):
+
+    struct_format = "<B" # Dummy, da noch nicht definiert TODO
+    entry_size = struct.calcsize(struct_format)  # = 8 Bytes
+
+    @classmethod
+    def from_bytes(cls, table_bytes:bytes) -> "RomIdTableEntryRaw8":
+        unpacked = struct.unpack(cls.struct_format, table_bytes)
+        return RomIdTableEntryRaw8(*unpacked)
+    
+
+
+@dataclass
+class RomIdTableEntryRaw12(RomIdTableEntryRaw):
+    '''
+    RomID table as used on '96 onwards
+    '''
+    master_table_address_rel:int # Needs offset adaption on some ECUs
+    romid_a:int #<!-- Adjustment index only high byte! --><!-- TODO: und Error 66 check flag in HI -->
+    tbd_b:int
+    romid_model_index:int
+    flagbytes:int
+
+    struct_format = ">BBBBBBHHBBBB"
+    entry_size = struct.calcsize(struct_format)  # = 12 Bytes
+
+    
+
+    @classmethod
+    def from_bytes(cls, table_bytes:bytes) -> "RomIdTableEntryRaw12":
+        unpacked = struct.unpack(cls.struct_format, table_bytes)
+        return RomIdTableEntryRaw12(*unpacked)
+    
     
 
 @dataclass
 class MasterTableInfo:
     pointer_addr_rel: int # Offset depends on ECU
-    length: int
+    #length: int
 
     entries: list["MasterTableEntry"]
 
@@ -161,6 +184,9 @@ class MasterTableEntry:
 
     def menu_item_str(self):
         return f"{(self.menu_item_0&0xF):0X}{(self.menu_item_1&0xF):0X}{(self.menu_item_2&0xF):0X}"
+    
+    def __str__(self) -> str:
+        return f"MasterTableEntry(menu_item={self.menu_item_str()}, {self.item_label + ", " if not self.item_label is None else ""} action_address_rel=0x{self.action_address_rel:04X}, scaling_index={self.scaling_index}, address_index={self.address_index}, upper_label_index={self.upper_label_index}, lower_label_index={self.lower_label_index}, adjustments_label_index={self.adjustments_label_index})"
 
     @classmethod
     def from_bytes(cls, table_bytes:bytes) -> "MasterTableEntry":

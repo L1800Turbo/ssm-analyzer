@@ -4,7 +4,7 @@ from typing import Optional
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.config.byte_interpreter import ByteInterpreter
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import ActionType, CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, SsmAction
+from analyzer_core.config.ssm_model import ActionType, CurrentSelectedDevice, MasterTableEntry, RomIdTableEntryInfo, SsmAction
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.emu.emulator_6303 import EmulationError, Emulator6303
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
@@ -14,7 +14,7 @@ from analyzer_core.ssm.action_functions.action_year import SsmActionYear
 
 
 class MasterTableEntryAnalyzer:
-    def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, current_device: CurrentSelectedDevice, romid_entry:RomIdTableEntry_512kb, mt_entry: MasterTableEntry) -> None:
+    def __init__(self, emulator: Emulator6303, rom_cfg: RomConfig, current_device: CurrentSelectedDevice, romid_entry: RomIdTableEntryInfo, mt_entry: MasterTableEntry) -> None:
         self.mt_entry = mt_entry
         self.romid_entry = romid_entry
         self.emulator = emulator
@@ -43,7 +43,7 @@ class MasterTableEntryAnalyzer:
 
         def label_to_mt(lbl_ptr:int|None, lbl_idx):
             if lbl_ptr is None:
-                raise EmulationError(f"Upper label pointer for RomID {self.romid_entry.print_romid_str}")
+                raise EmulationError(f"Upper label pointer for RomID {self.romid_entry.print_romid_str()}")
             
             if lbl_ptr == 0xFF:
                 return ""

@@ -194,6 +194,12 @@ class RomConfig:
     def check_for_function_address(self, address: int) -> bool:
         rom_var = self.get_by_address(address)
         return rom_var is not None and rom_var.type == RomVarType.FUNCTION and rom_var.rom_address is not None
+    
+    def get_name_or_address(self, address: int) -> str:
+        rom_var = self.get_by_address(address)
+        if rom_var is not None and rom_var.rom_address is not None:
+            return rom_var.name
+        return f"0x{address:04X}"
 
     def address_by_name(self, name: str) -> int:
         rom_var = self.get_by_name(name)

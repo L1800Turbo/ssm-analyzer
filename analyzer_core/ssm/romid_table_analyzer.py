@@ -1,9 +1,9 @@
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 import logging
 from typing import Optional
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableInfo, RomIdTableEntry_256kb, RomIdTableEntry_512kb, RomIdTableInfo
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableInfo, RomIdTableEntryInfo, RomIdTableEntryRaw8, RomIdTableEntryRaw12, RomIdTableInfo
 from analyzer_core.emu.emulator_6303 import Emulator6303
 from analyzer_core.ssm.master_table_analyzer import MasterTableAnalyzer
 from analyzer_core.ssm.romid_table_entry_analyzer import RomIdEntryAnalyzer
@@ -46,22 +46,22 @@ class RomIdTableAnalyzer:
         # Wir lesen das erste Entry, um die entry_size zu bestimmen, falls nötig
         # Hier gehen wir davon aus, dass table_info.entries[0] ggf. Typinformationen enthält,
         # ansonsten nutzen wir den bekannten 512kb-Eintragstyp als Standard.
-        entry_size = RomIdTableEntry_512kb.entry_size
+        entry_size = RomIdTableEntryRaw12.entry_size
 
         for i in range(self.table.length):
             start = self.table.relative_pointer_addr + i * entry_size
             table_bytes = self.emulator.mem.read_bytes(start, entry_size)
-            entry = self._parse_entry_bytes(table_bytes, entry_size)
+            entry = RomIdTableEntryInfo(**asdict(self._parse_entry_bytes(table_bytes, entry_size)))
             entry.entry_ptr_address = start
             self.table.entries.append(entry)
         
         # TODO List ist ja eigentlich falsch, das könnte man umsortieren, geht für den Pointer dann nicht
         
     def _parse_entry_bytes(self, table_bytes: bytes, entry_size: int):
-        if entry_size == RomIdTableEntry_512kb.entry_size:
-            return RomIdTableEntry_512kb.from_bytes(table_bytes)
-        elif entry_size == getattr(RomIdTableEntry_256kb, "entry_size", 0) and RomIdTableEntry_256kb.entry_size > 0:
-            return RomIdTableEntry_256kb.from_bytes(table_bytes)
+        if entry_size == RomIdTableEntryRaw12.entry_size:
+            return RomIdTableEntryRaw12.from_bytes(table_bytes)
+        elif entry_size == RomIdTableEntryRaw8.entry_size:
+            return RomIdTableEntryRaw8.from_bytes(table_bytes)
         else:
             raise ValueError(f"Unsupported RomIdTableEntry size: {entry_size}")
         
@@ -80,10 +80,6 @@ class RomIdTableAnalyzer:
 
 
         for entry in self.table.entries:
-            # skip unsupported formats
-            if isinstance(entry, RomIdTableEntry_256kb):
-                # keep previous behaviour (raise or skip)
-                raise NotImplementedError("Noch kein 256kb ROM")
             
             entry_analyzer = RomIdEntryAnalyzer(self.emulator, rom_cfg, self.table, entry)
 
@@ -115,12 +111,15 @@ class RomIdTableAnalyzer:
             # TODO Für Debuggen und schneller suchen
             #if entry.print_romid_str() != "74 BD 00" and entry.print_romid_str() != "71 93 00":  # 76 5D B0  71 93 00
             #   return
+
+            if entry.master_table_address_rel is None:
+                raise NotImplementedError(f"enrich_entries needs to be adapted for pre 96 Roms")
         
 
             # Create MasterTable analyzer for this entry (done by caller or here)
             entry.master_table = MasterTableInfo(
                                     pointer_addr_rel = entry.master_table_address_rel,
-                                    length = entry.entry_size,
+                                    #length = entry.entry_size,
                                     entries = []
                                 )
             master_table_analyzer = MasterTableAnalyzer(self.emulator, rom_cfg, entry)

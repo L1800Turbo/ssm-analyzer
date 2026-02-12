@@ -2,7 +2,7 @@ import struct
 from typing import Any
 from PyQt6.QtCore import Qt, QAbstractTableModel, QModelIndex
 
-from analyzer_core.config.ssm_model import RomIdTableEntry_512kb, RomIdTableInfo
+from analyzer_core.config.ssm_model import RomIdTableEntryRaw12, RomIdTableInfo
 from analyzer_core.data.romid_tables import MastertableIdentifier, SimpleMasterTableEntry, SimpleMasterTable
 
 

@@ -1,23 +1,14 @@
-# RomService (Facade)
-# Central facade for CLI/GUI. Methods: load, analyze, get_catalog
-
 import logging
 from pathlib import Path
 import struct
-from typing import List, Optional, Tuple
+from typing import Tuple
 from analyzer_core.analyze.ssm_function_emulator import SsmFunctionEmulator
 from analyzer_core.analyze.string_finder import RomStringFinder
 from analyzer_core.config.memory_map import MemoryMap
 from analyzer_core.config.ssm_model import CurrentSelectedDevice
 from analyzer_core.data.rom_image import RomImage
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.emu.emulator_6303 import Emulator6303
-from analyzer_core.emu.hooks import HookManager
 from analyzer_core.emu.memory_manager import MemoryManager
-from analyzer_core.emu.tracing import MemAccess
-
-#from analyzer_core.discovery import RomDiscoveryService
-#from analyzer_core.catalog import RomCatalog
 from analyzer_core.analyze.pattern_detector import PatternDetector
 from analyzer_core.analyze.repo import PatternRepository
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
@@ -29,8 +20,11 @@ class RomService:
         self.rom_cfg = RomConfig()
         self.rom_image = RomImage(image_file)
 
-    # TODO Ruft noch keiner auf gerade -> Hier könnte die Analyse-Pipeline integriert werden
+    
     def analyze(self):
+        '''
+        Main method to analyze the ROM of this service and fill the RomConfig with all information.
+        '''
 
         self.rom_cfg.instructions, self.rom_cfg.call_tree = self.disassemble_from_reset(self.rom_image)
 
@@ -75,7 +69,6 @@ class RomService:
 
         # Emulate functions to extract information
         ssm_fn_emu = SsmFunctionEmulator(self.rom_image, self.rom_cfg)
-
         ssm_fn_emu.run_ssm_functions()
 
 
@@ -86,69 +79,33 @@ class RomService:
         return list(root_folder.glob("*.bin"))
 
     # TODO Das RomImage dann nicht in Self rein? muss ja gar nicht bis in die GUI getragen werden?
-    def load_rom_image(self, rom_path: Path) -> RomImage:
-        """Load ROM image from file."""
-        return RomImage(rom_path)    
+    # def load_rom_image(self, rom_path: Path) -> RomImage:
+    #     """Load ROM image from file."""
+    #     return RomImage(rom_path)    
 
     def disassemble_from_reset(self, rom_image: RomImage) -> Tuple[dict[int, Instruction], dict]:
         """
-        Disassembliert nur tatsächlich erreichbaren Code ab Reset-Vektor und JSR/JMP-Zielen (rekursiv).
+        Disassemble code starting from the reset vector, which is the main entry point of the ROM. Returns a tuple of instructions and call tree.
         """
         mem = MemoryManager(MemoryMap(), rom_image)
         disasm = Disassembler630x(mem, self.rom_cfg)
 
         # Start fresh instruction and call tree lists
         instructions: dict[int, Instruction] = {}
-        call_tree: dict = {}
-        try:
-            start_addr = rom_image.reset_vector()
-        except Exception:
-            self.logger.warning("Failed to determine start address, defaulting to 0x0000")
-            start_addr = 0x0000
-        disasm.disassemble_reachable(start_addr, instructions, call_tree)
+        call_tree: dict = {}        
+
+        disasm.disassemble_reachable(rom_image.reset_vector(), instructions, call_tree)
 
         return instructions, call_tree
     
+    
     def disassemble_from_pointer_list(self, start_addresses: list[int], rom_image: RomImage, instructions: dict[int, Instruction], call_tree: dict):
-        '''
+        """
         Disassemble code by a given list of addresses which work as a pointer
-        '''
+        """
         mem = MemoryManager(MemoryMap(), rom_image)
         disasm = Disassembler630x(mem, self.rom_cfg)
 
         for start_addr in start_addresses:
             disasm.disassemble_reachable(start_addr, instructions, call_tree)
 
-
-
-
-    # def init_emulator(self, rom_image: RomImage) -> None:
-    #     """Initialize the emulator."""
-    #     self.logger.info("Initializing emulator.")
-    #     self.emulator = Emulator6303(rom_image=rom_image, rom_config=self.rom_cfg, current_device=)
-
-    #     # TODO Nur als Test
-
-
-    
-    # def step_from_address(self, addr: int) -> Optional[MemAccess]:
-    #     """Execute code from a specific address."""
-    #     if self.emulator is None:
-    #         self.logger.warning("Emulator not initialized.")
-    #         return None
-        
-    #     self.logger.info(f"Executing code from address: {addr:#04x}")
-    #     self.emulator.set_pc(addr)
-    #     #self.emulator.run_function_end()
-    #     return self.emulator.step()
-
-    # def run_to_function_end(self, addr: int) -> Optional[MemAccess]:
-    #     """Run the emulator until the end of the current function."""
-    #     if self.emulator is None:
-    #         self.logger.warning("Emulator not initialized.")
-    #         return None
-
-    #     self.logger.info("Running emulator to function end.")
-    #     self.emulator.set_pc(addr)
-    #     return self.emulator.run_function_end()
-        

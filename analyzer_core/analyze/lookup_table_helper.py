@@ -204,13 +204,15 @@ class LookupTableHelper:
         raise NotImplementedError("Could not extract item size and index variable from LUT expression.")
     
     @staticmethod
-    def substitute_lookup_tables(expr: sp.Expr | Relational): # -> tuple[sp.Expr | None, dict[Any, Any]]
+    def substitute_lookup_tables(expr: sp.Expr | Relational, generalize_name = False): # -> tuple[sp.Expr | None, dict[Any, Any]]
         """
         Ersetzt alle LookupTable-Funktionen im Ausdruck durch ein Symbol mit dem Namen LUT_xxxx(nn).
         """
         def lut_to_symbol(lut):
             # Name wie LUT_310B(x1)
             lut_name = lut.func.name if hasattr(lut.func, "name") else lut.func.__name__
+            if generalize_name:
+                lut_name = lut_name.rsplit("_", 1)[0]
             arg_str = str(lut.args[0])
             return sp.Symbol(f"{lut_name}({arg_str})")
                 

@@ -2,7 +2,7 @@ import logging
 import re
 from typing import Optional
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import ActionType, CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb, SsmAction
+from analyzer_core.config.ssm_model import ActionType, CurrentSelectedDevice, MasterTableEntry, RomIdTableEntryInfo
 from analyzer_core.emu.emulator_6303 import EmulationError, Emulator6303
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
 from analyzer_core.ssm.action_functions.action_helper import SsmActionHelper
@@ -16,7 +16,7 @@ class SsmActionYear(SsmActionHelper):
                  rom_cfg: RomConfig, 
                  emulator: Emulator6303, 
                  current_device: CurrentSelectedDevice, 
-                 romid_entry:RomIdTableEntry_512kb, 
+                 romid_entry:RomIdTableEntryInfo, 
                  mt_entry: MasterTableEntry) -> None:
 
         self.rom_cfg = rom_cfg

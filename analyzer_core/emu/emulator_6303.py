@@ -342,10 +342,10 @@ class Emulator6303:
             if instr.address == 0x9085: # SVX96 VorActionComms
                 pass
 
-            if instr.address == 0x87BC:
+            if instr.address == 0x3728:
                 pass
 
-            if instr.address == 0x3793:
+            if instr.address == 0x372B:
                 pass
 
           

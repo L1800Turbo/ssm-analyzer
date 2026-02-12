@@ -1,6 +1,6 @@
 import logging
 from analyzer_core.config.rom_config import RomConfig
-from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntry_512kb
+from analyzer_core.config.ssm_model import CurrentSelectedDevice, MasterTableEntry, RomIdTableEntryInfo
 from analyzer_core.disasm.capstone_wrap import Disassembler630x
 from analyzer_core.emu.memory_manager import MemoryManager
 from analyzer_core.emu.ssm_emu_helper import SsmEmuHelper
@@ -19,7 +19,7 @@ class SsmActionReadEcu(SsmActionHelper):
                  rom_cfg: RomConfig, 
                  emulator: Emulator6303, 
                  current_device: CurrentSelectedDevice, 
-                 romid_entry:RomIdTableEntry_512kb, 
+                 romid_entry: RomIdTableEntryInfo, 
                  mt_entry: MasterTableEntry) -> None:
         super().__init__(rom_cfg, emulator)
         self.current_device = current_device
