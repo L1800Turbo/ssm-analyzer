@@ -77,7 +77,7 @@ class SsmActionYear(SsmActionHelper):
         logger.debug(f"Found RomID entry for year: {self.romid_entry.ssm_year}, model: {self.romid_entry.ssm_model}")
     
 
-    def __interpret_year_string(self, year_model_str: str) -> tuple[int, str]:
+    def __interpret_year_string(self, year_model_str: str) -> tuple[str|int, str]:
         '''
         Interpret the raw strings and fetch information like year and model
         [ 1996     (F00) ]
@@ -92,17 +92,18 @@ class SsmActionYear(SsmActionHelper):
         [ YEAR     (F00) ]      [ CRUISE   (F00) ]
         [     1995       ]      [   CONTROL      ]
 
-        [ 1995     (F00) ]
-        [ ABS᛫TCS  FF    ]
+        [ 1995     (F00) ]      [ 1997  SEP(F00) ]
+        [ ABS᛫TCS  FF    ]      [  ABS   FF᛫AT   ]
 
         '''
 
         # Switch through known patterns and extract year and model
 
         # [ 1996     (F00)   2.0    TURBO  ]
-        m = re.search(r"(19\d{2})\s+\(F00\)\s(.*)", year_model_str)
+        # [ 1997  SEP(F00)   ABS   FF᛫AT   ]
+        m = re.search(r"(19\d{2}\s+(?:\w{3})*)\s*\(F00\)\s(.*)", year_model_str)
         if m:
-            year = int(m.group(1))
+            year = re.sub(r"\s+", " ", m.group(1).strip())
             model = re.sub(r"\s+", " ", m.group(2).strip())
             return year, model
         
