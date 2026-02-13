@@ -20,8 +20,9 @@
 '''
 
 import logging
-from PyQt6.QtWidgets import QMainWindow, QTabWidget, QWidget, QVBoxLayout, QStatusBar, QMenuBar, QMenu, QFileDialog, QTextEdit, QHBoxLayout, QLabel, QComboBox, QPushButton
+from PyQt6.QtWidgets import QMainWindow, QSplitter, QTabWidget, QWidget, QVBoxLayout, QStatusBar, QMenuBar, QMenu, QFileDialog, QTextEdit, QHBoxLayout, QLabel, QComboBox, QPushButton
 from PyQt6.QtGui import QAction
+from PyQt6.QtCore import Qt
 from analyzer_core.data.romid_tables import RomIdTableCollector
 from ssm_gui.widgets.asm_viewer import AsmViewerWidget
 from ssm_gui.widgets.rom_catalog import RomCatalogWidget
@@ -95,9 +96,13 @@ class MainWindow(QMainWindow):
         top_bar.addStretch(1)
         self.main_vertical_layout.addLayout(top_bar)
 
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.main_vertical_layout.addWidget(splitter, 1)
+
         # Tabs
         self.tabs = QTabWidget()
-        self.main_vertical_layout.addWidget(self.tabs)
+        #self.main_vertical_layout.addWidget(self.tabs)
+        splitter.addWidget(self.tabs)
         self.asm_viewer = AsmViewerWidget()
         self.tabs.addTab(self.asm_viewer, "Analysis")
         self.rom_catalog = RomCatalogWidget(self.rom_services)
@@ -112,7 +117,7 @@ class MainWindow(QMainWindow):
         # Log area
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
-        self.main_vertical_layout.addWidget(self.log_area)
+        splitter.addWidget(self.log_area)
 
         #self.central_widget.setLayout(self.main_vertical_layout)
 
@@ -167,7 +172,7 @@ class MainWindow(QMainWindow):
         self.asm_viewer.build_current_rom_ui()
 
         # Add into global RomID safe:
-        self.romid_tables.add_ssm_cassette(current_service.rom_cfg.romid_tables)
+        self.romid_tables.add_ssm_cassette(current_service.rom_image.image_name, current_service.rom_cfg.romid_tables)
 
         # Refresh info tree with ROM information
         # TODO hier auch set_rom_service machen?

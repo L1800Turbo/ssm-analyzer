@@ -88,13 +88,9 @@ class SsmTablesWidget(QWidget):
 
     def _on_device_changed(self, index: int):
         """Device changed, load corresponding RomID table."""
-        #self._on_romid_table_changed(-1)
-        #self.romid_table = None
+        
         self.selected_romid_entry = None
         self.refresh_measurements_table()
-
-        #self.selected_master_table_entry = None
-        #self.refresh_action_table()
 
         self.refresh_romid_table()
 
@@ -143,39 +139,6 @@ class SsmTablesWidget(QWidget):
         else:
             self.lookup_table_model.setLut({})  # Leere Tabelle, falls nichts ausgewählt
 
-        
-
-    # def _on_master_table_changed(self, index:int):
-    #     '''
-    #     Master table changed, load the matching action
-    #     '''
-    #     sel_model = self.measurement_view.selectionModel()
-    #     if sel_model is None:
-    #         self.selected_master_table_entry = None
-    #         self.refresh_action_table()
-    #         return
-        
-    #     rows = sel_model.selectedRows()
-    #     if not rows:
-    #         self.selected_master_table_entry = None
-    #         self.refresh_action_table()
-    #         return
-        
-    #     row = rows[0].row()
-    #     # guard: ensure we have a master_table and entries
-    #     if not hasattr(self.master_table_model, "master_table") or self.master_table_model.master_table is None:
-    #         self.selected_master_table_entry = None
-    #         self.refresh_action_table()
-    #         return
-
-    #     if row < 0 or row >= len(self.master_table_model.master_table.entries):
-    #         self.selected_master_table_entry = None
-    #         self.refresh_action_table()
-    #         return
-
-    #     self.selected_master_table_entry = list(self.master_table_model.master_table.entries.values())[row]
-    #     self.refresh_action_table()
-
     
     def refresh_romid_table(self):
         device = self.device_select.currentData()
@@ -186,24 +149,6 @@ class SsmTablesWidget(QWidget):
         else:
             self.romid_table_model.setRomIdTable({})
 
-        # TODO Folgende Anpassungen sind notwendig:
-        # - eine Funktion, die alle RomID-Tables zusammenfasst (aus allen RomServices)
-        # - dann das Modell ausgeben
-        # - aber vermutlich ein Level höher, nciht hier in widget
-
-        # for rom_path, ecu in self.rom_services.items():
-        #     self.current_romid_table = ecu.rom_cfg.romid_tables.get(device)
-
-        #     if self.current_romid_table:
-        #         self.romid_table_model.setRomIdTable(self.current_romid_table)
-        #     #if romid_info:
-        #     #   self.romid_model.setRomIdTable(romid_info)
-        #     #   self.romid_table.resizeColumnsToContents()
-
-        #     # TODO Es sollte eine Oberklasse über Service geben, die letztlich alle Infromationen zusammen sammelt
-
-        #     self.logger.warning("TODO: Nur eine RomIDtabelle bis jetzt")
-        #     return
 
     def refresh_measurements_table(self):
         master_table: Optional[SimpleMasterTable] = getattr(self, "selected_romid_entry", None)
@@ -214,30 +159,3 @@ class SsmTablesWidget(QWidget):
         # master is expected to be a MasterTableInfo instance
         self.measurement_model.setMeasurements(master_table.measurements)
         self.measurement_view.resizeColumnsToContents()
-        
-    # def refresh_master_table(self):
-    #     master_table = getattr(self, "selected_romid_entry", None)
-    #     if master_table is None:
-    #         self.master_table_model.setMasterTable(cast(SimpleMasterTable, None))
-    #         return
-
-
-    #     # master is expected to be a MasterTableInfo instance
-    #     self.master_table_model.setMasterTable(master_table)
-    #     self.master_table_view.resizeColumnsToContents()
-    
-    # def refresh_action_table(self):
-    #     # TODO Diese hier sollte dann komplett zwischen Switch / Scaling / Diag /... unterscheiden
-    #     entry = getattr(self, "selected_master_table_entry", None)
-    #     if entry is None:
-    #         self.action_model.setScaling(cast(SimpleScaling, None))
-    #         return
-
-    #     action = getattr(entry, "action", None)
-    #     if action is None:
-    #         self.action_model.setScaling(cast(SimpleScaling, None))
-    #         return
-
-    #     # action is expected to be a SsmAction instance
-    #     self.action_model.setScaling(action)
-    #     self.action_view.resizeColumnsToContents()

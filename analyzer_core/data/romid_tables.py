@@ -47,6 +47,8 @@ class SimpleMasterTable:
     model: str
     year: str
 
+    source_cassettes: set[str] = field(default_factory=set)
+
     measurements: dict[str, SimpleMeasurement] = field(default_factory=dict)
     switches: dict[str, SimpleSwitchDefinition] = field(default_factory=dict)
 
@@ -67,25 +69,15 @@ class RomIdTableCollector:
         self.romid_tables: dict[CurrentSelectedDevice, dict[MastertableIdentifier, SimpleMasterTable]] = {}  # key: device , romid -> SimpleMasterTable
         self.measurements: dict[str, SimpleMeasurement] = {}  # key: scaling name
     
-    def add_ssm_cassette(self, ssm_romid_tables: dict[CurrentSelectedDevice, RomIdTableInfo]):
+    def add_ssm_cassette(self, cassette_name:str, ssm_romid_tables: dict[CurrentSelectedDevice, RomIdTableInfo]):
         for device, romid_table in ssm_romid_tables.items():
             for romid_entry in romid_table.entries:
-                self.add_romid_table(device, romid_entry)
+                self.add_romid_table(cassette_name, device, romid_entry)
     
-    def add_romid_table(self, device:CurrentSelectedDevice, ssm_romid_table:RomIdTableEntryInfo):
+    def add_romid_table(self, cassette_name:str, device:CurrentSelectedDevice, ssm_romid_table:RomIdTableEntryInfo):
         '''
         Add a RomID with master table entry to the collector, create a new entry if the RomID doesn't exist
         '''
-
-        # def compare_entries(entry: SimpleMasterTableEntry, no_possible_entries:int, existing_entries: dict[str, Any]) -> bool:
-        #     for i in range(1, no_possible_entries+1):
-        #         existing_label = f"{entry.label}_{i}"
-        #         if existing_label in existing_entries:
-        #             existing_entry = existing_entries[existing_label]
-        #             if existing_entry == entry:
-        #                 return True
-            
-        #     raise RomMismatchError(f"Conflict detected for device {device.name}, RomID {current_romid:06X}, entry {entry.label}")
 
         if not device in self.romid_tables:
             self.romid_tables[device] = {}
@@ -104,6 +96,7 @@ class RomIdTableCollector:
                 romid_str=ssm_romid_table.print_romid_str(),
                 model=ssm_romid_table.ssm_model if ssm_romid_table.ssm_model else "",
                 year=str(ssm_romid_table.ssm_year) if ssm_romid_table.ssm_year else "",
+                source_cassettes={cassette_name},
                 romid_identifier_value=ssm_romid_table.romid_identifier_value
             )
             create_new_entry = True
@@ -154,6 +147,10 @@ class RomIdTableCollector:
 
                 # Otherwise, compare existing entries
                 else:
+                    # Add the current cassette's name as source for this entry
+                    self.romid_tables[device][current_identifier].source_cassettes.add(cassette_name)
+
+
                     # Loop over all existing entries with the same label and check if one matches, otherwise raise conflict
                     if isinstance(new_entry, SimpleMeasurement):
                         existing_entries = self.romid_tables[device][current_identifier].measurements

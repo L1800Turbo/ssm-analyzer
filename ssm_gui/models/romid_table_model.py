@@ -9,7 +9,7 @@ from analyzer_core.data.romid_tables import MastertableIdentifier, SimpleMasterT
 class RomIdTableModel(QAbstractTableModel):
     """Qt TableModel to visualize RomIdTableInfo.entries"""
 
-    HEADERS = ["RomID", "Model", "Year"]
+    HEADERS = ["RomID", "Model", "Year", "Source cassettes"]
 
     def __init__(self, romid_table: dict[int | str, SimpleMasterTable] | None = None, parent=None):
         super().__init__(parent)
@@ -37,6 +37,7 @@ class RomIdTableModel(QAbstractTableModel):
                 0: f"{entry.romid_str}{f' / {entry.romid_identifier_value[0]:04X} -> {entry.romid_identifier_value[1]}' if entry.romid_identifier_value else ''}",
                 1: entry.model if entry.model else "",
                 2: entry.year if entry.year else "",
+                3: ", ".join(entry.source_cassettes) if entry.source_cassettes else ""
             }
 
         value = mapping.get(col, "")
