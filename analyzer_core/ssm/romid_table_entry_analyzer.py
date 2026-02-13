@@ -24,6 +24,16 @@ class RomIdEntryAnalyzer:
         self.entry = entry
         self.emulator = emulator
         self.rom_cfg = rom_cfg
+
+        self._ssm_protocol_combination_invalid = False
+    
+    def set_ssm_protocol_combination_invalid(self, value: bool=True):
+        self._ssm_protocol_combination_invalid = value
+    
+    def get_reset_ssm_protocol_combination_invalid(self) -> bool:
+        value = self._ssm_protocol_combination_invalid
+        self._ssm_protocol_combination_invalid = False
+        return value
         
 
     def prepare_for_device(self, device: CurrentSelectedDevice) -> None:
@@ -126,6 +136,18 @@ class RomIdEntryAnalyzer:
             if(set_romid_line_pointer != self.entry.entry_ptr_address):
                 logger.debug(f"current_romid_line_pointer set for RomID {self.entry.print_romid_str()} during request_romid_save_romid, "
                              f"expected was {self.entry.entry_ptr_address:04X}, set value is {set_romid_line_pointer:04X}!")
+        
+        def search_matching_romid_post_hook(em: Emulator6303, mem_access: MemAccess):
+            # If no possible combination was found, a carry flag will be set at the end of the function
+            if em.flags.C:
+                #logger.warning(f"RomID {self.entry.print_romid_str()}: No matching RomID found for any of the tested SSM command and protocol combinations!")
+
+                em.abort_execution = True
+
+                # Mark current combination as invalid
+                self.set_ssm_protocol_combination_invalid(True)
+
+            # TODO hier sollte der ganze Emulatordurchlauf weg sein
 
         def test_ssm_protocol(ssm_cmd, ssm_protocol):
             # Set the current SSM command and protocol in memory before running the function
@@ -143,7 +165,13 @@ class RomIdEntryAnalyzer:
             # Hook when the line pointer is being written, take +1 as it's 16bit and we want to see the final value
             self.emulator.hooks.add_write_hook(self.rom_cfg.address_by_name('current_romid_line_pointer')+1, hook_set_current_romid_line_pointer)
 
+            # Check if during the RomID search a possible combination from protocol an RomID was found. If not, a carry flag will be set. We should check for this
+            self.emulator.hooks.add_post_hook(self.rom_cfg.address_by_name("search_matching_romid_96"), search_matching_romid_post_hook)
+            # TODO hook wieder entfenren..
             self.emulator.run_function_end()
+
+            # Check if the last run produced a valid combination
+            return not self.get_reset_ssm_protocol_combination_invalid()
 
 
         if self.entry.ssm_cmd_protocols is None or len(self.entry.ssm_cmd_protocols) == 0:
@@ -151,27 +179,30 @@ class RomIdEntryAnalyzer:
 
         # For multiple SSM commands and Protocols we have to run the function multiple times
         for ssm_cmd, ssm_protocol in self.entry.ssm_cmd_protocols:
-            test_ssm_protocol(ssm_cmd, ssm_protocol)
-
-            # Get static and emulated RomID parts for comparison
-            romid_parts = (self.entry.romid0, self.entry.romid1, self.entry.romid2)
-            emulator_parts = (
-                self.emulator.read8(self.rom_cfg.address_by_name('romid_0')),
-                self.emulator.read8(self.rom_cfg.address_by_name('romid_1')),
-                self.emulator.read8(self.rom_cfg.address_by_name('romid_2'))
-            )
-
-            # We let the code run through, so that we get any hard coded RomIDs.
-            # If they differ, we dump this RomID combination
-            if romid_parts != emulator_parts:
-                # Take this protocol out of the list, it doesn't work, but keep the last one
+            if not test_ssm_protocol(ssm_cmd, ssm_protocol):
                 if len(self.entry.ssm_cmd_protocols) > 1:
                     # TODO Rauslöschen von indizies innerhalb der Schleife -> anpassen, damit es nicht zu Problemen kommt
                     self.entry.ssm_cmd_protocols.remove((ssm_cmd, ssm_protocol))
-                else:
-                    logger.warning(f"SSM command and protocol combination for RomID {self.entry.print_romid_str()} doesn't seem to work: "
-                                   f"got RomID {emulator_parts[0]:02X} {emulator_parts[1]:02X} {emulator_parts[2]:02X}, "
-                                   f"expected was {romid_parts[0]:02X} {romid_parts[1]:02X} {romid_parts[2]:02X}. Keeping this combination for now.")
+            else:
+                # Get static and emulated RomID parts for comparison
+                romid_parts = (self.entry.romid0, self.entry.romid1, self.entry.romid2)
+                emulator_parts = (
+                    self.emulator.read8(self.rom_cfg.address_by_name('romid_0')),
+                    self.emulator.read8(self.rom_cfg.address_by_name('romid_1')),
+                    self.emulator.read8(self.rom_cfg.address_by_name('romid_2'))
+                )
+
+                # We let the code run through, so that we get any hard coded RomIDs.
+                # If they differ, we dump this RomID combination
+                if romid_parts != emulator_parts:
+                    # Take this protocol out of the list, it doesn't work, but keep the last one
+                    if len(self.entry.ssm_cmd_protocols) > 1:
+                        # TODO Rauslöschen von indizies innerhalb der Schleife -> anpassen, damit es nicht zu Problemen kommt
+                        self.entry.ssm_cmd_protocols.remove((ssm_cmd, ssm_protocol))
+                    else:
+                        logger.warning(f"SSM command and protocol combination for RomID {self.entry.print_romid_str()} doesn't seem to work: "
+                                    f"got RomID {emulator_parts[0]:02X} {emulator_parts[1]:02X} {emulator_parts[2]:02X}, "
+                                    f"expected was {romid_parts[0]:02X} {romid_parts[1]:02X} {romid_parts[2]:02X}. Keeping this combination for now.")
         
         if len(self.entry.ssm_cmd_protocols) > 1:
             logger.warning(f"Multiple SSM command and protocol combinations found for RomID {self.entry.print_romid_str()}: "

@@ -79,6 +79,8 @@ class Emulator6303:
 
         self.last_run_steps = 0
 
+        self.abort_execution = False
+
         # TODO Noch registrieren und hier weg
         # try:
         #     log_path = Path("logs/asm_trace.html")
@@ -333,27 +335,19 @@ class Emulator6303:
 
             asm_step: MemAccess = func(instr)
 
-            if instr.address == 0x93AE: # SVX96 YEAR mit 199*
+            # Sanity check for stack pointer underflow (e.g. abrupted function without returning, ...)
+            if self.SP < self.rom_config.get_stack_pointer() - 0x20:
+                raise EmulationError(f"Stack pointer underflow: SP={self.SP:04X} at instruction {instr.mnemonic} {instr.op_str} (address {instr.address:04X})")
+
+            if instr.address == 0x91C1:
                 pass
 
-            if instr.address == 0x2B75: # DIO1 bei 0x2C36 für 4AT könnte auch noch komisch werden -> romid3 abhängig
-                pass
-
-            if instr.address == 0x9085: # SVX96 VorActionComms
-                pass
-
-            if instr.address == 0x3728:
-                pass
-
-            if instr.address == 0x372B:
+            if instr.address == 0x91C6:
                 pass
 
           
-
-
             for logger in self.asm_logger.values():
                 logger(instr, asm_step)
-
 
             # Take care of post-hooks
             for pc in list(self.hooks.waiting_for_post_hook.keys()):
@@ -383,6 +377,9 @@ class Emulator6303:
         Run from the current PC into functions and back until a RTS/RTI from the current level is reached.
         """
 
+
+        stackpointer_position = self.SP
+
         # If we want to run until this level's rts/rti or abort at specific PC
         if abort_pc is not None:
             sentinel = abort_pc & 0xFFFF
@@ -398,11 +395,15 @@ class Emulator6303:
             if self.PC == sentinel:
                 break
 
-            if self.PC == 0x2AA6:
-                pass
+            if self.abort_execution:
+                # Reset Stackpointer position if we abort a function
+                self.SP = stackpointer_position
+                break
 
             last_step = self.step()
             steps += 1
+
+        self.abort_execution = False
 
         if steps >= max_steps:
             raise TimeoutError("run_function_end: step limit exceeded")

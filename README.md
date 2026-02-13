@@ -34,6 +34,7 @@ Functions that currently work or are still on the roadmap:
 - [ ] Multi address measurements
 - [ ] Multi address switches
 - [ ] DTC analysis
+- [ ] Collect RomIDs that are not in the tables: e.g. AT ECU accepts multiple year numbers inside RomID for the RomID tables
 - [ ] Adjustments, system check and programming functions
 - [ ] Pytest with known rom parts
 - [ ] XML export to FreeSSM format

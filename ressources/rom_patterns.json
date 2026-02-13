@@ -263,7 +263,7 @@
         { "mnemonic": "std",  "op_str": "REF{ssm_tx_byte_1}" },
         { "mnemonic": "ldab", "op_str": "REF{current_selected_device}" }
       ],
-      "description": "request_romid_save_romid"
+      "description": "request_romid_save_romid, TODO IMPREZA'97: clr vor sei, muss ein skip-Element max_skip 1?"
     },
     {
       "name": "search_matching_romid_96",
