@@ -46,8 +46,8 @@ class SsmTablesWidget(QWidget):
         top_bar.addStretch(1)
         layout.addLayout(top_bar)
 
-        splitter = QSplitter()
-        layout.addWidget(splitter, 1)
+        self.splitter = QSplitter()
+        layout.addWidget(self.splitter, 1)
 
         self.romid_table_view = QTableView()
         self.romid_table_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -56,23 +56,22 @@ class SsmTablesWidget(QWidget):
         self.romid_table_model = RomIdTableModel()
         self.romid_table_view.setModel(self.romid_table_model)
         #self.romid_table.horizontalHeader().setStretchLastSection(True)
-        splitter.addWidget(self.romid_table_view)
+        self.splitter.addWidget(self.romid_table_view)
 
         self.measurement_view = QTableView()
         self.measurement_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.measurement_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.measurement_model = MeasurementsModel()
         self.measurement_view.setModel(self.measurement_model)
-        splitter.addWidget(self.measurement_view)
+        self.splitter.addWidget(self.measurement_view)
 
         self.lookup_table_view = QTableView()
         self.lookup_table_view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.lookup_table_view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.lookup_table_model = LookupTableModel()
         self.lookup_table_view.setModel(self.lookup_table_model)
-        splitter.addWidget(self.lookup_table_view)
-
-
+        self.splitter.addWidget(self.lookup_table_view)
+        self.lookup_table_view.setVisible(False)  # Initial ausblenden
 
         romid_table_selection_model = self.romid_table_view.selectionModel()
         if romid_table_selection_model: 
@@ -88,6 +87,9 @@ class SsmTablesWidget(QWidget):
 
     def _on_device_changed(self, index: int):
         """Device changed, load corresponding RomID table."""
+
+        # Hide lookup table view until we know we have a measurement with lookup table to show
+        self.lookup_table_view.setVisible(False)
         
         self.selected_romid_entry = None
         self.refresh_measurements_table()
@@ -98,6 +100,9 @@ class SsmTablesWidget(QWidget):
         '''
         RomID table changed, load the matching master table
         '''
+        # Hide lookup table view until we know we have a measurement with lookup table to show
+        self.lookup_table_view.setVisible(False)
+
         # get first selected row (single selection mode expected)
         sel_model = self.romid_table_view.selectionModel()
         if sel_model is None:
@@ -136,9 +141,17 @@ class SsmTablesWidget(QWidget):
             row = indexes[0].row()
             lookup_table = self.measurement_model.get_lookup_table_for_row(row)
             self.lookup_table_model.setLut(lookup_table or {})
+            
+            if lookup_table:
+                self.lookup_table_view.setVisible(True)
+                self.splitter.setSizes([2, 2, 1])
+            else:
+                self.lookup_table_view.setVisible(False)
+                self.splitter.setSizes([1, 1])
         else:
             self.lookup_table_model.setLut({})  # Leere Tabelle, falls nichts ausgewählt
-
+            self.lookup_table_view.setVisible(False)
+            self.splitter.setSizes([1, 1])
     
     def refresh_romid_table(self):
         device = self.device_select.currentData()

@@ -43,9 +43,10 @@ Functions that currently work or are still on the roadmap:
 ## Supported cassettes
 
 
-|Cassette | part number | status|
-|--|--|--|
+|Cassette   | part number | status          |
+|-----------|-----------|-------------------|
 IMPREZA '96 | 498345800 | supported as above
+IMPREZA '97 | 498346200 | supportes as above
 SVX '96     | 498346001 | supported as above
 SVX '97     | 498346700 | supported as above
 
